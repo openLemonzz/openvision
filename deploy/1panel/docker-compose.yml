@@ -1,0 +1,28 @@
+services:
+  web:
+    build:
+      context: .
+      target: web
+    env_file:
+      - ./web.env
+    ports:
+      - "8080:80"
+    restart: always
+    networks:
+      - vision-net
+
+  admin:
+    build:
+      context: .
+      target: admin
+    env_file:
+      - ./admin.env
+    ports:
+      - "8787:8787"
+    restart: always
+    networks:
+      - vision-net
+
+networks:
+  vision-net:
+    driver: bridge
