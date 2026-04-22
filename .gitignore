@@ -1,2 +1,12 @@
 .DS_Store
 .env
+web/.env
+admin/.env
+node_modules
+dist
+web/node_modules
+web/dist
+admin/node_modules
+admin/dist
+*.log
+supabase/.temp

@@ -12,7 +12,6 @@ export interface ResolveRuntimeConfigOptions {
 export type RuntimeGate =
   | { kind: 'config-missing'; missingKeys: string[] }
   | { kind: 'check-required'; missingKeys: [] }
-  | { kind: 'local-fallback'; missingKeys: [] }
   | { kind: 'pass-through'; missingKeys: [] };
 
 export interface ResolvedRuntimeConfig {
@@ -67,38 +66,27 @@ export function resolveRuntimeConfig({
     runtimeConfig.VITE_SUPABASE_ANON_KEY || envConfig.VITE_SUPABASE_ANON_KEY
   );
   const supabaseEnabled = supabaseUrl.length > 0 && supabaseAnonKey.length > 0;
+  const missingKeys = REQUIRED_RUNTIME_KEYS.filter((key) =>
+    normalizeValue(runtimeConfig[key] || envConfig[key]).length === 0
+  );
+
+  if (missingKeys.length > 0) {
+    return {
+      runtime,
+      supabaseUrl,
+      supabaseAnonKey,
+      supabaseEnabled,
+      gate: { kind: 'config-missing', missingKeys: [...missingKeys] },
+    };
+  }
 
   if (runtime === 'docker') {
-    const missingKeys = REQUIRED_RUNTIME_KEYS.filter((key) =>
-      normalizeValue(runtimeConfig[key] || envConfig[key]).length === 0
-    );
-
-    if (missingKeys.length > 0) {
-      return {
-        runtime,
-        supabaseUrl,
-        supabaseAnonKey,
-        supabaseEnabled,
-        gate: { kind: 'config-missing', missingKeys: [...missingKeys] },
-      };
-    }
-
     return {
       runtime,
       supabaseUrl,
       supabaseAnonKey,
       supabaseEnabled,
       gate: { kind: 'check-required', missingKeys: [] },
-    };
-  }
-
-  if (!supabaseEnabled) {
-    return {
-      runtime,
-      supabaseUrl,
-      supabaseAnonKey,
-      supabaseEnabled,
-      gate: { kind: 'local-fallback', missingKeys: [] },
     };
   }
 

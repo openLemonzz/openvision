@@ -3,18 +3,16 @@ services:
     build:
       context: .
       target: web
+    env_file:
+      - ./web/.env
     ports:
-      - "${WEB_PORT:-8080}:80"
-    environment:
-      VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
-      VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+      - "8080:80"
 
-  init:
+  admin:
     build:
       context: .
-      target: init
-    environment:
-      SUPABASE_ACCESS_TOKEN: ${SUPABASE_ACCESS_TOKEN:-}
-      PROJECT_REF: ${PROJECT_REF:-}
-      SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD:-}
-    restart: "no"
+      target: admin
+    env_file:
+      - ./admin/.env
+    ports:
+      - "8787:8787"

@@ -1,26 +1,33 @@
-FROM node:24-alpine AS app-base
+FROM node:24-alpine AS web-build
 
-WORKDIR /app
-COPY app/package.json app/package-lock.json ./
-RUN npm ci
+WORKDIR /workspace
+COPY web/package.json web/package-lock.json /workspace/web/
+RUN cd /workspace/web && npm install
+COPY web/ /workspace/web/
+RUN cd /workspace/web && npm run build
 
-FROM app-base AS web-build
+FROM node:24-alpine AS admin-build
 
-COPY app/ ./
-RUN npm run build
-
-FROM app-base AS init
-
-RUN npm install supabase@2.90.0 && ln -s /app/node_modules/.bin/supabase /usr/local/bin/supabase
-COPY app/ ./
-COPY docker/init-entrypoint.sh /usr/local/bin/init-entrypoint.sh
-RUN chmod +x /usr/local/bin/init-entrypoint.sh
-CMD ["sh", "/usr/local/bin/init-entrypoint.sh"]
+WORKDIR /workspace
+COPY admin/package.json /workspace/admin/package.json
+RUN cd /workspace/admin && npm install
+COPY admin/ /workspace/admin/
+RUN cd /workspace/admin && npm run build
 
 FROM nginx:1.27-alpine AS web
 
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/web-entrypoint.sh /docker-entrypoint.d/40-write-env.sh
-COPY --from=web-build /app/dist /usr/share/nginx/html
+COPY --from=web-build /workspace/web/dist /usr/share/nginx/html
 RUN chmod +x /docker-entrypoint.d/40-write-env.sh
 EXPOSE 80
+
+FROM node:24-alpine AS admin
+
+WORKDIR /app
+COPY admin/package.json /app/package.json
+RUN npm install --omit=dev
+COPY --from=admin-build /workspace/admin/dist/client /app/dist/client
+COPY --from=admin-build /workspace/admin/dist/server /app/dist/server
+EXPOSE 8787
+CMD ["node", "dist/server/index.js"]

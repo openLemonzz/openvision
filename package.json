@@ -1,0 +1,36 @@
+{
+  "name": "vision",
+  "private": true,
+  "workspaces": [
+    "web",
+    "admin"
+  ],
+  "scripts": {
+    "dev:web": "npm --prefix web run dev",
+    "dev:admin": "npm --prefix admin run dev",
+    "build:web": "npm --prefix web run build",
+    "build:admin": "npm --prefix admin run build",
+    "lint:web": "npm --prefix web run lint",
+    "lint:admin": "npm --prefix admin run lint",
+    "db:migrate": "sh ./scripts/db-migrate.sh",
+    "docker:up": "docker compose up -d --build",
+    "docker:up:web": "docker compose up -d --build web",
+    "docker:up:admin": "docker compose up -d --build admin",
+    "docker:recreate:web": "docker compose up -d --build --force-recreate web",
+    "docker:recreate:admin": "docker compose up -d --build --force-recreate admin",
+    "docker:restart:web": "docker compose restart web",
+    "docker:restart:admin": "docker compose restart admin",
+    "docker:logs:web": "docker compose logs -f web",
+    "docker:logs:admin": "docker compose logs -f admin",
+    "docker:ps": "docker compose ps",
+    "docker:down": "docker compose down --remove-orphans"
+  },
+  "dependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/types": "^7.29.0",
+    "@supabase/auth-js": "^2.104.0",
+    "@supabase/supabase-js": "^2.104.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "lucide-react": "^0.562.0"
+  }
+}

@@ -1,6 +1,15 @@
 .DS_Store
 .git
 .gitignore
+.env
+web/.env
+admin/.env
+node_modules
 app/dist
 app/node_modules
 app/supabase/.temp
+web/dist
+web/node_modules
+admin/dist
+admin/node_modules
+supabase/.temp

@@ -1,0 +1,7 @@
+project_id = "vision"
+
+[storage]
+enabled = true
+
+[storage.buckets.images]
+public = true

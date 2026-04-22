@@ -12,7 +12,6 @@ export const appRuntimeConfig = resolveRuntimeConfig({
 export const supabaseUrl = appRuntimeConfig.supabaseUrl;
 export const supabaseAnonKey = appRuntimeConfig.supabaseAnonKey;
 export const isDockerRuntime = appRuntimeConfig.runtime === 'docker';
-export const localFallbackAllowed = appRuntimeConfig.gate.kind === 'local-fallback';
 const isConfigured = appRuntimeConfig.supabaseEnabled;
 
 export const supabase = isConfigured
