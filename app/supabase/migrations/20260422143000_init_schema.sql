@@ -1,14 +1,3 @@
--- ============================================================
--- VISION (影境) - Supabase schema snapshot
--- Primary deployment path:
---   1. app/supabase/migrations/*.sql
---   2. app/supabase/config.toml
---   3. npm run deploy:supabase:init
---
--- This file is kept as a readable snapshot / manual fallback and
--- mirrors the initial migration.
--- ============================================================
-
 create table public.generations (
   id uuid primary key default gen_random_uuid(),
   picture_id text unique,
@@ -121,5 +110,3 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row
   execute function public.handle_invite_on_signup();
-
--- Storage bucket and function config are now managed by app/supabase/config.toml.

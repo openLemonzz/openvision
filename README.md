@@ -79,48 +79,68 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-> 只需这两项。外部 API 的 Key 和 Endpoint **通过后台管理配置**，无需写入环境变量。
+本地首次启动并使用注册 / 登录时，前端 `.env` 只需要这两项：
+
+| 变量 | 用途 | 去哪里获取 |
+|---|---|---|
+| `VITE_SUPABASE_URL` | 前端连接 Supabase 项目；未配置时登录、注册、历史记录都会走本地 fallback | Supabase Dashboard → **Connect** 里的 **Project URL**，或 Project Settings → **API** → **Project URL** |
+| `VITE_SUPABASE_ANON_KEY` | 浏览器端公开 key，用于调用 Auth / Database / Functions | Supabase Dashboard → **Connect** 里的 API key，或 Project Settings → **API** → **anon / publishable key** |
+
+说明：
+
+- 这两个值写入 `app/.env`，不要写到 shell `export` 里。
+- 外部 AI API 的 Key 和 Endpoint **通过后台管理配置**，不需要写入前端环境变量。
+- 如果你希望本地注册后能收到确认邮件，Supabase Dashboard → Authentication → **URL Configuration** 里的 **Site URL** 需要设为 `http://localhost:5173`。
+- 如果开启了邮箱确认，建议把 `http://localhost:5173` 也加入 **Redirect URLs**，避免确认邮件跳错环境。
 
 ### 2. 安装依赖
 
 ```bash
+cd app
 npm install
 ```
 
-### 3. 数据库 Schema
+### 3. 首次初始化 Supabase
 
-在 Supabase Dashboard → **SQL Editor** 中执行 `supabase/schema.sql` 全部内容。
-
-### 4. 创建 Storage Bucket
-
-Dashboard → Storage → **New bucket**：
-- Name: `images`
-- 勾选 **Public bucket**
-
-### 5. 部署 Edge Functions
+确保本机已安装 Supabase CLI，然后在 `app` 目录执行：
 
 ```bash
-# 登录并链接项目
-supabase login
-supabase link --project-ref your-project-ref
-
-# 部署三个函数
-supabase functions deploy generate-image --no-verify-jwt
-supabase functions deploy check-email --no-verify-jwt
-supabase functions deploy admin-users --no-verify-jwt
+export SUPABASE_ACCESS_TOKEN=your-access-token
+export PROJECT_REF=your-project-ref
+export SUPABASE_DB_PASSWORD=your-db-password
+npm run deploy:supabase:init
 ```
 
-> `--no-verify-jwt` 必需。JWT 验证放在 Edge Function 代码内处理。
+这条命令会自动完成：
 
-### 6. 邮件模板（可选）
+- `supabase link --project-ref $PROJECT_REF`
+- 执行 `app/supabase/migrations/*.sql`
+- 创建公开的 `images` bucket
+- 部署全部 Edge Functions
 
-Dashboard → Authentication → **Email Templates**，替换为 `supabase/email-templates.md` 中的内容。
+所需环境变量：
 
-同时设置 **Site URL** 为 `http://localhost:5173`（开发）或你的生产域名。
+| 变量 | 说明 | 去哪里获取 |
+|---|---|---|
+| `SUPABASE_ACCESS_TOKEN` | Supabase 访问令牌，供 CLI 无交互认证 | Supabase Dashboard → Account → **Access Tokens**，新建一个 personal access token |
+| `PROJECT_REF` | 项目 ref，例如 `abcd1234efgh5678` | Supabase Dashboard → Project Settings → **General** → **Reference ID**，也通常是项目域名 `https://<project-ref>.supabase.co` 里的那段前缀 |
+| `SUPABASE_DB_PASSWORD` | `supabase link` / `db push` 连接远程数据库所需密码 | 创建项目时设置的数据库密码；如果忘了，可在 Supabase Dashboard 的数据库设置页面重置 |
 
-### 7. 启动
+> Edge Functions 的 `verify_jwt = false` 已写入 `app/supabase/config.toml`，不需要再手动加 `--no-verify-jwt`。
+
+### 4. 邮件模板（可选）
+
+Dashboard → Authentication → **Email Templates**，替换为 `app/supabase/email-templates.md` 中的内容。
+
+同时设置：
+
+- **Site URL**：开发环境填 `http://localhost:5173`，生产环境填你的正式域名
+- **Redirect URLs**：至少加入 `http://localhost:5173`
+
+### 5. 启动
 
 ```bash
+cd app
 npm run dev
 ```
 
@@ -182,12 +202,14 @@ npm run dev
 
 | 文件 | 说明 |
 |---|---|
-| `supabase/schema.sql` | 数据库初始 schema |
-| `supabase/migrate_lifecycle.sql` | 生命周期字段迁移 |
-| `supabase/email-templates.md` | 邮件模板 HTML |
-| `supabase/functions/generate-image/index.ts` | 图片生成 Edge Function |
-| `supabase/functions/check-email/index.ts` | 邮箱查重 Edge Function |
-| `supabase/functions/admin-users/index.ts` | 用户列表 Edge Function |
+| `app/supabase/config.toml` | Supabase CLI 配置，含 bucket 和 function 配置 |
+| `app/supabase/migrations/20260422143000_init_schema.sql` | 首次部署数据库迁移 |
+| `app/supabase/schema.sql` | schema 快照 / 手工参考 |
+| `app/supabase/email-templates.md` | 邮件模板 HTML |
+| `app/supabase/functions/generate-image/index.ts` | 图片生成 Edge Function |
+| `app/supabase/functions/check-email/index.ts` | 邮箱查重 Edge Function |
+| `app/supabase/functions/admin-users/index.ts` | 用户列表 Edge Function |
+| `app/scripts/deploy-supabase-init.mjs` | 无交互首次部署脚本 |
 
 ---
 
@@ -199,11 +221,11 @@ npm run dev
 
 ### 数据库字段报错
 
-执行一次迁移 SQL（见步骤 3）。
+确认已在 `app` 目录执行 `npm run deploy:supabase:init`，并检查 `SUPABASE_DB_PASSWORD` 是否正确。
 
 ### 后台看不到真实用户
 
-确认 `admin-users` Edge Function 已部署。管理员登录后会自动拉取 `auth.users`。
+确认已执行 `npm run deploy:supabase:init`。管理员登录后会自动拉取 `auth.users`。
 
 ---
 

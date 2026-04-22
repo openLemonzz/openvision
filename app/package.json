@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy:supabase:init": "node ./scripts/deploy-supabase-init.mjs",
+    "test:supabase:init": "node --test ./scripts/deploy-supabase-init.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
