@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase, supabaseEnabled } from '@/lib/supabase';
+import { getFunctionUrl, supabase, supabaseEnabled } from '@/lib/supabase';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 // ======== Types ========
@@ -115,7 +115,7 @@ export function useAuth() {
     if (supabaseEnabled) {
       // Check if email already exists before signing up
       try {
-        const checkRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-email`, {
+        const checkRes = await fetch(getFunctionUrl('check-email'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: email.trim() }),

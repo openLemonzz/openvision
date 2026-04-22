@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabaseEnabled } from '@/lib/supabase';
+import { getFunctionUrl, supabaseEnabled } from '@/lib/supabase';
 import type { AdminUser } from '@/pages/admin/AdminUsers';
 import type { ModelConfig, ApiProtocol } from '@/pages/admin/AdminModels';
 
@@ -64,7 +64,7 @@ export function useAdmin() {
     if (!isAdminLoggedIn || !supabaseEnabled) return;
     const fetchRealUsers = async () => {
       try {
-        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-users`, {
+        const res = await fetch(getFunctionUrl('admin-users'), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password: DEFAULT_ADMIN_PASSWORD }),
         });

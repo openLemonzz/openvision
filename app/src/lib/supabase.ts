@@ -1,15 +1,29 @@
 import { createClient } from '@supabase/supabase-js';
+import { resolveRuntimeConfig } from './runtime-config';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+export const appRuntimeConfig = resolveRuntimeConfig({
+  envConfig: {
+    VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL,
+    VITE_SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY,
+  },
+  runtimeConfig: typeof window !== 'undefined' ? window.__APP_CONFIG__ : {},
+});
 
-const isConfigured = supabaseUrl.length > 0 && supabaseAnonKey.length > 0;
+export const supabaseUrl = appRuntimeConfig.supabaseUrl;
+export const supabaseAnonKey = appRuntimeConfig.supabaseAnonKey;
+export const isDockerRuntime = appRuntimeConfig.runtime === 'docker';
+export const localFallbackAllowed = appRuntimeConfig.gate.kind === 'local-fallback';
+const isConfigured = appRuntimeConfig.supabaseEnabled;
 
 export const supabase = isConfigured
   ? createClient(supabaseUrl, supabaseAnonKey)
   : createClient('http://placeholder.invalid', 'placeholder');
 
 export const supabaseEnabled = isConfigured;
+
+export function getFunctionUrl(name: string) {
+  return `${supabaseUrl.replace(/\/$/, '')}/functions/v1/${name}`;
+}
 
 // Database types
 type AspectRatio = '1:1' | '16:9' | '3:4' | '9:16';

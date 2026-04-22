@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
-import { supabase, supabaseEnabled } from '@/lib/supabase';
+import { getFunctionUrl, supabase, supabaseEnabled } from '@/lib/supabase';
 import type { GenerationRow } from '@/lib/supabase';
 import type { ModelConfig } from '@/pages/admin/AdminModels';
 
@@ -308,7 +308,7 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
         const timeoutId = setTimeout(() => controller.abort(), 300_000);
 
         try {
-          const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-image`, {
+          const response = await fetch(getFunctionUrl('generate-image'), {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${accessToken}`,

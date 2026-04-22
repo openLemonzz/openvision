@@ -1,0 +1,6 @@
+.DS_Store
+.git
+.gitignore
+app/dist
+app/node_modules
+app/supabase/.temp

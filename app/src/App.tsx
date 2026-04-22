@@ -13,14 +13,16 @@ import AdminUsers from './pages/admin/AdminUsers';
 import AdminModels from './pages/admin/AdminModels';
 import AdminGenerations from './pages/admin/AdminGenerations';
 import ConsoleGenerations from './pages/console/ConsoleGenerations';
+import InitializationScreen from './components/InitializationScreen';
 import { useAuth } from './hooks/useAuth';
 import { useGeneration } from './hooks/useGeneration';
 import { useAdmin } from './hooks/useAdmin';
+import { useInitialization } from './hooks/useInitialization';
 
 // Re-export for type usage
 export type { GenerationRecord } from './hooks/useGeneration';
 
-function App() {
+function AppRoutes() {
   const auth = useAuth();
   const admin = useAdmin();
   const gen = useGeneration(auth.user?.id, admin.models);
@@ -184,6 +186,24 @@ function App() {
       />
     </Routes>
   );
+}
+
+function App() {
+  const initialization = useInitialization();
+
+  if (initialization.status.kind !== 'ready') {
+    return (
+      <InitializationScreen
+        status={initialization.status}
+        runtimeConfig={initialization.runtimeConfig}
+        onRetry={() => {
+          void initialization.refresh();
+        }}
+      />
+    );
+  }
+
+  return <AppRoutes />;
 }
 
 export default App;
