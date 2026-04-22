@@ -10,9 +10,7 @@
 
     "baseUrl": ".",
     "paths": {
-      "lucide-react": [
-        "./icon-shim.tsx"
-      ],
+
       "@/*": [
         "./src/*"
       ]

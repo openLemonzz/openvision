@@ -12,7 +12,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@supabase/auth-js': supabaseAuthEntry,
-      'lucide-react': path.resolve(__dirname, './icon-shim.tsx'),
+
       '@': path.resolve(__dirname, 'src'),
     },
   },

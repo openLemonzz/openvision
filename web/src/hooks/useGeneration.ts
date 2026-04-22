@@ -133,6 +133,8 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
 
     try {
       const records = await adminFetch<GenerationRecord[]>('/my/generations', {}, accessToken);
+      // 按创建时间降序排列，确保最新的记录在最前面
+      records.sort((a, b) => b.createdAt - a.createdAt);
       console.log(`[FE] loadHistory() loaded ${records.length} records`);
       setHistory(records);
     } catch (error) {
@@ -172,8 +174,27 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
       return '';
     }
 
+    const tempId = `temp-${Date.now()}`;
+    const tempRecord: GenerationRecord = {
+      id: tempId,
+      pictureId: null,
+      prompt,
+      aspectRatio,
+      styleStrength,
+      engine: modelConfig.id,
+      imageUrl: '',
+      createdAt: Date.now(),
+      expiresAt: null,
+      lifecycle: 'pending',
+      status: 'pending',
+      isFavorite: false,
+      userId,
+    };
+
+    let success = false;
     generatingRef.current = true;
     setIsGenerating(true);
+    setHistory(prev => [tempRecord, ...prev]);
 
     try {
       const accessToken = await getAccessToken();
@@ -196,19 +217,32 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
         accessToken
       );
 
-      await loadHistory();
+      success = true;
 
-      generatingRef.current = false;
-      setIsGenerating(false);
+      // 用真实 ID 更新临时记录为生成中状态，让用户立刻看到占位
+      setHistory(prev => prev.map(r =>
+        r.id === tempId
+          ? { ...r, id: response.id, status: 'generating' as const, lifecycle: 'generating' as const }
+          : r
+      ));
+
+      // 延迟刷新历史记录，给后端数据库同步时间
+      setTimeout(() => void loadHistory(), 1200);
+      setTimeout(() => void loadHistory(), 3500);
+
       console.log('[FE] ========== GENERATE END (success) ==========');
       return response.id;
     } catch (err: unknown) {
       toast.error('生成异常: ' + getErrorMessage(err));
       console.error('[FE] ========== GENERATE END (CRASH) ==========');
       console.error('[FE] Generation crash:', getErrorMessage(err), err);
+      return '';
+    } finally {
       generatingRef.current = false;
       setIsGenerating(false);
-      return '';
+      if (!success) {
+        setHistory(prev => prev.filter(r => r.id !== tempId));
+      }
     }
   }, [getAccessToken, loadHistory, models, userId]);
 

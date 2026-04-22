@@ -9,7 +9,7 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "lucide-react": ["./icon-shim.tsx"],
+
       "@/*": ["./src/*"]
     },
     "moduleResolution": "bundler",

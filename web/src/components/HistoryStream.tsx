@@ -9,6 +9,13 @@ interface HistoryStreamProps {
   lifecycleTick?: number;
 }
 
+const aspectMap: Record<string, string> = {
+  '1:1': '1/1',
+  '16:9': '16/9',
+  '3:4': '3/4',
+  '9:16': '9/16',
+};
+
 function CinematicRevealImage({ src, alt, aspectRatio }: { src: string; alt: string; aspectRatio: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -45,13 +52,6 @@ function CinematicRevealImage({ src, alt, aspectRatio }: { src: string; alt: str
     animation: revealed ? `revealScan ${duration}s ${delay}s steps(${steps}, end) forwards` : 'none',
     transformOrigin: 'left',
     pointerEvents: 'none',
-  };
-
-  const aspectMap: Record<string, string> = {
-    '1:1': '1/1',
-    '16:9': '16/9',
-    '3:4': '3/4',
-    '9:16': '9/16',
   };
 
   return (
@@ -166,7 +166,7 @@ export default function HistoryStream({ records, onDelete, lifecycleTick }: Hist
               {record.status === 'pending' ? (
                 <div
                   className="w-full flex items-center justify-center bg-[#0D0D0D] border border-[#262626]"
-                  style={{ aspectRatio: '16/9' }}
+                  style={{ aspectRatio: aspectMap[record.aspectRatio] || '1/1' }}
                 >
                   <div className="text-center">
                     <div
@@ -181,7 +181,7 @@ export default function HistoryStream({ records, onDelete, lifecycleTick }: Hist
               ) : record.status === 'generating' ? (
                 <div
                   className="w-full flex items-center justify-center bg-[#0D0D0D] border border-[#262626]"
-                  style={{ aspectRatio: '16/9' }}
+                  style={{ aspectRatio: aspectMap[record.aspectRatio] || '1/1' }}
                 >
                   <div className="text-center">
                     <div
