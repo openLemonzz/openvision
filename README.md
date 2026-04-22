@@ -289,6 +289,65 @@ npm run deploy:supabase:init
 
 ## Troubleshooting
 
+### Docker 构建 `npm ci` 报错：`package-lock.json` 不同步
+
+如果看到 `Missing: @next/swc-xxx / sharp / @img/sharp-xxx from lock file`，说明 `package-lock.json` 与 `package.json` 不同步（通常是旧版 npm 生成）。
+
+**修复**：升级 npm 到 11.12+，重新生成 lock 文件：
+
+```bash
+cd app
+npm install -g npm@11.12.1
+rm -rf node_modules && npm install
+```
+
+### Docker 构建 `init` 容器失败：`npm install -g supabase` 被拒绝
+
+Supabase CLI 新版 postinstall 脚本会拒绝全局安装，报错 `Installing Supabase CLI as a global module is not supported.`
+
+**修复**：已改为本地安装 + symlink（见 `Dockerfile` `init` target），无需手动处理。
+
+### Docker 页面黑屏
+
+黑屏通常因为 `env.js` 没有正确写入 Supabase 配置。
+
+**排查步骤**：
+
+1. 检查 `env.js` 内容：
+   ```bash
+   curl -s http://localhost:8080/env.js
+   ```
+   正确输出应包含 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY`。
+
+2. 如果 `env.js` 是 `window.__APP_CONFIG__ = {};`，说明环境变量未注入。检查 `.env` 文件，然后重新创建容器：
+   ```bash
+   docker compose up -d --force-recreate web
+   ```
+
+3. 确认 URL 格式正确（必须是 **Project URL**，不是数据库连接地址）：
+   - ✅ `https://xxxxx.supabase.co`
+   - ❌ `db.xxxxx.supabase.co`（这是 Postgres Pooler 地址，前端无法连接）
+
+### Docker `init` 容器数据库连接超时
+
+报错：`failed to connect to postgres: tls error (read tcp ... i/o timeout)`
+
+**可能原因**：
+- 本地网络防火墙限制容器访问外网
+- Supabase 项目开启了 **Network Restrictions / IPv4**，当前 IP 不在白名单
+
+**修复**：
+- 切换网络（如手机热点）再试
+- 或去 Supabase Dashboard → Database → Network Restrictions，加入当前公网 IP 或设为 `0.0.0.0/0`
+- 也可以跳过 Docker init，在宿主机本地执行初始化：
+  ```bash
+  cd app
+  export SUPABASE_ACCESS_TOKEN=xxx
+  export PROJECT_REF=xxx
+  export SUPABASE_DB_PASSWORD=xxx
+  npm run deploy:supabase:init
+  ```
+
 ### 生成超时
 
 外部 API 可能需要 2-3 分钟。前端已设置 `fetch` 300 秒超时。如果仍超时，检查网络或 API 服务状态。

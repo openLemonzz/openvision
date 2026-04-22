@@ -11,7 +11,7 @@ RUN npm run build
 
 FROM app-base AS init
 
-RUN npm install -g supabase@2.90.0
+RUN npm install supabase@2.90.0 && ln -s /app/node_modules/.bin/supabase /usr/local/bin/supabase
 COPY app/ ./
 COPY docker/init-entrypoint.sh /usr/local/bin/init-entrypoint.sh
 RUN chmod +x /usr/local/bin/init-entrypoint.sh
