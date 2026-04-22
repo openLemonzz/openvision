@@ -7,11 +7,16 @@ const supabaseAuthEntry = fs.existsSync(path.resolve(__dirname, './node_modules/
   ? path.resolve(__dirname, './node_modules/@supabase/auth-js/src/index.ts')
   : path.resolve(__dirname, '../node_modules/@supabase/auth-js/src/index.ts');
 
+const lucideReactEntry = fs.existsSync(path.resolve(__dirname, './node_modules/lucide-react/dist/cjs/lucide-react.js'))
+  ? path.resolve(__dirname, './node_modules/lucide-react/dist/cjs/lucide-react.js')
+  : path.resolve(__dirname, '../node_modules/lucide-react/dist/cjs/lucide-react.js');
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
       '@supabase/auth-js': supabaseAuthEntry,
+      'lucide-react': lucideReactEntry,
 
       '@': path.resolve(__dirname, 'src'),
     },

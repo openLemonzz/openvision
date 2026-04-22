@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, supabaseEnabled } from '@/lib/supabase';
 import { adminFetch } from '@/lib/admin-api';
+import { resolveRegisterResult, type RegisterSignUpResult } from '@/lib/auth-registration';
 
 type SupabaseUser = {
   id: string;
   email?: string | null;
   user_metadata?: Record<string, unknown>;
+  identities?: unknown[] | null;
 };
 
 type SupabaseSession = {
@@ -44,7 +46,7 @@ export function useAuth() {
       email: string;
       password: string;
       options: { data: Record<string, unknown> };
-    }) => Promise<{ data: { session: { user: SupabaseUser } | null }; error?: never; } | { data: { session: null }; error?: never; } | { data: { session: { user: SupabaseUser } | null }; error: { message: string } | null }>;
+    }) => Promise<RegisterSignUpResult>;
     signOut: () => Promise<{ error?: { message: string } | null }>;
   };
 
@@ -146,28 +148,25 @@ export function useAuth() {
 
   // ======== Register ========
   const register = useCallback(async (username: string, email: string, password: string, inviteCode?: string) => {
-    const { data, error: signUpError } = await authClient.signUp({
+    const registerResult = await authClient.signUp({
       email, password,
       options: { data: { username, invite_code: inviteCode || null } },
     });
-    if (signUpError) {
-      const msg = signUpError.message.toLowerCase();
-      if (msg.includes('already registered') || msg.includes('already exists')) {
-        setError('该邮箱已被注册，请直接登录');
-      } else if (msg.includes('email') && (msg.includes('invalid') || msg.includes('format'))) {
-        setError('邮箱格式不正确');
-      } else if (msg.includes('password')) {
-        setError('密码强度不足，请至少6位');
-      } else {
-        setError(signUpError.message);
-      }
+
+    const resolvedResult = resolveRegisterResult(registerResult);
+
+    if (resolvedResult.kind === 'error') {
+      setError(resolvedResult.errorMessage ?? '注册失败');
+      setConfirmationMessage('');
       return false;
     }
-    if (!data.session) {
-      setConfirmationMessage('注册成功！请前往邮箱查收确认邮件，点击链接完成验证。');
+
+    if (resolvedResult.kind === 'confirmation') {
+      setConfirmationMessage(resolvedResult.confirmationMessage ?? '');
       setError('');
       return true;
     }
+
     setShowAuthModal(false);
     setError('');
     setConfirmationMessage('');
