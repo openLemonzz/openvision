@@ -3,9 +3,7 @@ import {
   type InitializationReadiness,
   evaluateInitializationReadiness,
 } from '@/lib/runtime-config';
-import { appRuntimeConfig, getFunctionUrl, isDockerRuntime } from '@/lib/supabase';
-
-const PROBED_FUNCTIONS = ['check-email', 'admin-users', 'generate-image'] as const;
+import { appRuntimeConfig, isDockerRuntime } from '@/lib/supabase';
 const RETRY_INTERVAL_MS = 5000;
 
 type ConfigMissingState = {
@@ -19,7 +17,6 @@ type CheckingState = {
   message: string;
   missingKeys: [];
   missingResources: [];
-  missingFunctions: [];
 };
 
 type ReadyState = {
@@ -27,7 +24,6 @@ type ReadyState = {
   message: string;
   missingKeys: [];
   missingResources: [];
-  missingFunctions: [];
 };
 
 export type InitializationStatus =
@@ -43,7 +39,6 @@ function getInitialStatus(): InitializationStatus {
       message: 'Local runtime does not require Docker initialization.',
       missingKeys: [],
       missingResources: [],
-      missingFunctions: [],
     };
   }
 
@@ -60,27 +55,7 @@ function getInitialStatus(): InitializationStatus {
     message: 'Checking Supabase readiness...',
     missingKeys: [],
     missingResources: [],
-    missingFunctions: [],
   };
-}
-
-async function probeFunction(name: string) {
-  try {
-    const response = await fetch(getFunctionUrl(name), {
-      method: 'OPTIONS',
-      cache: 'no-store',
-    });
-
-    return {
-      name,
-      status: response.status,
-    };
-  } catch {
-    return {
-      name,
-      status: 0,
-    };
-  }
 }
 
 export function useInitialization() {
@@ -94,7 +69,6 @@ export function useInitialization() {
         message: 'Local runtime does not require Docker initialization.',
         missingKeys: [],
         missingResources: [],
-        missingFunctions: [],
       } satisfies InitializationStatus;
     }
 
@@ -109,24 +83,20 @@ export function useInitialization() {
       message: 'Checking Supabase readiness...',
       missingKeys: [],
       missingResources: [],
-      missingFunctions: [],
     });
 
     try {
-      const healthResponse = await fetch(getFunctionUrl('health'), {
+      const healthResponse = await fetch(`${appRuntimeConfig.adminApiUrl}/health`, {
         method: 'GET',
         cache: 'no-store',
       });
       const healthPayload = healthResponse.ok
         ? ((await healthResponse.json()) as {
-            ready: boolean;
-            missingResources: string[];
-            message: string;
+            ok: boolean;
+            missing: string[];
+            error?: string;
           })
         : null;
-      const functionProbes = await Promise.all(
-        PROBED_FUNCTIONS.map((name) => probeFunction(name))
-      );
 
       const next = evaluateInitializationReadiness({
         health: {
@@ -134,7 +104,6 @@ export function useInitialization() {
           status: healthResponse.status,
           payload: healthPayload,
         },
-        functionProbes,
       });
 
       setStatus(next);
@@ -145,7 +114,6 @@ export function useInitialization() {
         kind: 'network-error',
         message,
         missingResources: [],
-        missingFunctions: [],
       };
       setStatus(next);
       return next;

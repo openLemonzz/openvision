@@ -6,38 +6,52 @@ interface PublicModelPayload {
   id: string;
   name: string;
   provider: string;
-  default_size: string;
+  enabled: boolean;
+  maxTokens: number;
+  temperature: number;
+  defaultSize: string;
   protocol: ModelConfig['protocol'];
 }
 
 export function usePublicModels() {
   const [models, setModels] = useState<ModelConfig[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let alive = true;
 
     const load = async () => {
       try {
-        const payload = await adminFetch<PublicModelPayload[]>('/public/models');
+        setLoading(true);
+        setError(null);
+        const data = await adminFetch<PublicModelPayload[]>('/public/models');
+
         if (!alive) return;
 
         setModels(
-          payload.map((model) => ({
-            id: model.id,
-            name: model.name,
-            provider: model.provider,
+          (data || []).map((row) => ({
+            id: row.id,
+            name: row.name,
+            provider: row.provider,
             apiKey: '',
             apiEndpoint: '',
-            enabled: true,
-            maxTokens: 1000,
-            temperature: 0.7,
-            defaultSize: model.default_size,
-            protocol: model.protocol,
+            enabled: row.enabled,
+            maxTokens: row.maxTokens,
+            temperature: row.temperature,
+            defaultSize: row.defaultSize,
+            protocol: row.protocol as ModelConfig['protocol'],
           }))
         );
-      } catch {
+      } catch (err) {
         if (!alive) return;
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
         setModels([]);
+      } finally {
+        if (alive) {
+          setLoading(false);
+        }
       }
     };
 
@@ -48,5 +62,5 @@ export function usePublicModels() {
     };
   }, []);
 
-  return models;
+  return { models, error, loading };
 }

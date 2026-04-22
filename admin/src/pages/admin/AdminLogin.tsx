@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, AlertCircle } from 'lucide-react';
+import { getAdminLoginErrorMessage } from '@/lib/admin-login-error';
 
 interface AdminLoginProps {
   onLogin: (email: string, password: string) => Promise<boolean>;
@@ -26,8 +27,8 @@ export default function AdminLogin({ onLogin }: AdminLoginProps) {
       }
 
       navigate('/');
-    } catch {
-      setError('邮箱或密码错误');
+    } catch (error) {
+      setError(getAdminLoginErrorMessage(error));
     } finally {
       setSubmitting(false);
     }

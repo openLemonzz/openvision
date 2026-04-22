@@ -36,7 +36,7 @@ function AdminRedirect() {
 
 function AppRoutes() {
   const auth = useAuth();
-  const models = usePublicModels();
+  const { models, error: modelsError, loading: modelsLoading } = usePublicModels();
   const gen = useGeneration(auth.user?.id, models);
 
   return (
@@ -121,6 +121,8 @@ function AppRoutes() {
                     isLoggedIn={auth.isLoggedIn}
                     history={gen.history}
                     models={models}
+                    modelsError={modelsError}
+                    modelsLoading={modelsLoading}
                     lifecycleTick={gen.lifecycleTick}
                     onGenerate={gen.generate}
                     onRequireAuth={auth.openLogin}

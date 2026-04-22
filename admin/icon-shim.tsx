@@ -67,6 +67,7 @@ export const MoreHorizontal = createIcon('MoreHorizontal');
 export const MoreHorizontalIcon = createIcon('MoreHorizontalIcon');
 export const OctagonXIcon = createIcon('OctagonXIcon');
 export const PanelLeftIcon = createIcon('PanelLeftIcon');
+export const Plus = createIcon('Plus');
 export const Ratio = createIcon('Ratio');
 export const Save = createIcon('Save');
 export const Search = createIcon('Search');

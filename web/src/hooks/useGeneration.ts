@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
-import { supabase, supabaseEnabled } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { adminFetch } from '@/lib/admin-api';
-import type { GenerationRow } from '@/lib/supabase';
 import type { ModelConfig } from '@/pages/admin/AdminModels';
 
 export type AspectRatio = '1:1' | '16:9' | '3:4' | '9:16';
@@ -82,43 +81,8 @@ export function calculateLifecycle(record: GenerationRecord): LifecycleInfo {
   return { lifecycle, progress, remainingText };
 }
 
-// ======== LocalStorage Fallback ========
-const HISTORY_KEY_PREFIX = 'vision_history_fallback';
-
-function getLocalHistoryKey(userId: string) {
-  return `${HISTORY_KEY_PREFIX}:${userId}`;
-}
-
-function loadLocalHistory(userId: string): GenerationRecord[] {
-  try { return JSON.parse(localStorage.getItem(getLocalHistoryKey(userId)) || '[]'); } catch { return []; }
-}
-
-function saveLocalHistory(userId: string, history: GenerationRecord[]) {
-  localStorage.setItem(getLocalHistoryKey(userId), JSON.stringify(history));
-}
-
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function mapRowToRecord(row: GenerationRow): GenerationRecord {
-  const record: GenerationRecord = {
-    id: row.id,
-    pictureId: row.picture_id,
-    prompt: row.prompt,
-    aspectRatio: row.aspect_ratio as AspectRatio,
-    styleStrength: row.style_strength,
-    engine: row.engine,
-    imageUrl: row.image_url || '',
-    createdAt: new Date(row.created_at).getTime(),
-    expiresAt: row.picture_expires_at ? new Date(row.picture_expires_at).getTime() : null,
-    lifecycle: row.picture_lifecycle,
-    isFavorite: row.is_favorite ?? false,
-    status: row.status as GenerationRecord['status'],
-    userId: row.user_id,
-  };
-  console.log(`[DB→FE] id=${row.id.slice(0, 8)} status=${row.status} lifecycle=${row.picture_lifecycle} picture_id=${row.picture_id?.slice(0, 16) || 'null'} expires_at=${row.picture_expires_at || 'null'}`);
-  return record;
 }
 
 // ======== Hook ========
@@ -130,6 +94,11 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
   const [isGenerating, setIsGenerating] = useState(false);
   const generatingRef = useRef(false);
   const [lifecycleTick, setLifecycleTick] = useState(Date.now());
+
+  const getAccessToken = useCallback(async () => {
+    const { data: sessionData } = await authClient.getSession();
+    return sessionData.session?.access_token ?? null;
+  }, [authClient]);
 
   // Polling: re-calculate lifecycle every 30s
   useEffect(() => {
@@ -150,64 +119,31 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
 
   // Load history
   const loadHistory = useCallback(async () => {
-    if (!userId) return;
+    if (!userId) {
+      setHistory([]);
+      return;
+    }
     console.log('[FE] loadHistory() start, userId:', userId);
 
-    if (supabaseEnabled) {
-      const { data, error } = await supabase
-        .from('generations')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(50);
-      if (error) { console.error('[FE] Failed to load history:', error); return; }
-      const records = (data || []).map(mapRowToRecord);
-      console.log(`[FE] loadHistory() loaded ${records.length} records`);
-      records.slice(0, 3).forEach(r => {
-        const info = calculateLifecycle(r);
-        console.log(`[FE]   record=${r.id.slice(0, 8)} status=${r.status} lifecycle=${r.lifecycle}→calc=${info.lifecycle} progress=${info.progress.toFixed(1)}%`);
-      });
-      setHistory(records);
-    } else {
-      setHistory(loadLocalHistory(userId).slice(0, 50));
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      setHistory([]);
+      return;
     }
-  }, [userId]);
 
-  // Subscribe to real-time updates (Supabase only)
+    try {
+      const records = await adminFetch<GenerationRecord[]>('/my/generations', {}, accessToken);
+      console.log(`[FE] loadHistory() loaded ${records.length} records`);
+      setHistory(records);
+    } catch (error) {
+      console.error('[FE] Failed to load history:', getErrorMessage(error));
+      setHistory([]);
+    }
+  }, [getAccessToken, userId]);
+
   useEffect(() => {
-    if (!userId) return;
-
-    loadHistory();
-
-    if (!supabaseEnabled) return;
-
-    const channel = supabase
-      .channel('generations_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'generations', filter: `user_id=eq.${userId}` },
-        (payload) => {
-          console.log(`[FE] Realtime ${payload.eventType} id=${(payload.new as GenerationRow)?.id?.slice(0, 8) || (payload.old as GenerationRow)?.id?.slice(0, 8)}`);
-          if (payload.eventType === 'INSERT') {
-            const rec = mapRowToRecord(payload.new as GenerationRow);
-            const info = calculateLifecycle(rec);
-            console.log(`[FE]   INSERT → status=${rec.status} lifecycle=${rec.lifecycle} calc=${info.lifecycle}`);
-            setHistory(prev => [rec, ...prev]);
-          } else if (payload.eventType === 'UPDATE') {
-            const oldRow = payload.old as GenerationRow;
-            const newRow = payload.new as GenerationRow;
-            console.log(`[FE]   UPDATE → status: ${oldRow.status}→${newRow.status} lifecycle: ${oldRow.picture_lifecycle}→${newRow.picture_lifecycle} image_url: ${oldRow.image_url ? 'yes' : 'no'}→${newRow.image_url ? 'yes' : 'no'}`);
-            setHistory(prev => prev.map(r => r.id === payload.new.id ? mapRowToRecord(payload.new as GenerationRow) : r));
-          } else if (payload.eventType === 'DELETE') {
-            console.log(`[FE]   DELETE`);
-            setHistory(prev => prev.filter(r => r.id !== payload.old.id));
-          }
-        }
-      )
-      .subscribe();
-
-    return () => { channel.unsubscribe(); };
-  }, [userId, loadHistory]);
+    void loadHistory();
+  }, [loadHistory]);
 
   // Generate
   const generate = useCallback(async (
@@ -240,132 +176,32 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     setIsGenerating(true);
 
     try {
-      let actualRecordId = '';
-      const now = Date.now();
-
-      // Create pending record
-      if (supabaseEnabled) {
-        console.log('[FE] Creating pending record in DB...');
-        const { data, error } = await supabase
-          .from('generations')
-          .insert({ user_id: userId, prompt, aspect_ratio: aspectRatio, style_strength: styleStrength, engine, status: 'pending', picture_lifecycle: 'pending' })
-          .select()
-          .single();
-        if (error || !data) {
-          console.error('[FE] Failed to create record:', error);
-          generatingRef.current = false;
-          setIsGenerating(false);
-          return '';
-        }
-        actualRecordId = data.id;
-        console.log('[FE] DB record created, recordId:', actualRecordId);
-      } else {
-        actualRecordId = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        console.log('[FE] Local recordId:', actualRecordId);
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        toast.error('请先登录后再生成');
+        return '';
       }
 
-      const pendingRecord: GenerationRecord = {
-        id: actualRecordId,
-        pictureId: null,
-        prompt,
-        aspectRatio,
-        styleStrength,
-        engine,
-        imageUrl: '',
-        createdAt: now,
-        expiresAt: null,
-        lifecycle: null,
-        isFavorite: false,
-        status: 'generating',
-        userId,
-      };
-      setHistory(prev => [pendingRecord, ...prev]);
-      console.log('[FE] Pending record added to local state');
+      const response = await adminFetch<{ id: string }>(
+        '/generate',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            prompt: prompt.trim(),
+            modelId: modelConfig.id,
+            aspectRatio,
+            styleStrength,
+          }),
+        },
+        accessToken
+      );
 
-      if (supabaseEnabled) {
-        // Get session token for auth
-        const { data: sessionData } = await authClient.getSession();
-        const accessToken = sessionData.session?.access_token;
-        if (!accessToken) {
-          console.error('[FE] No access token available');
-          await supabase.from('generations').update({ status: 'failed', picture_lifecycle: 'expired' }).eq('id', actualRecordId).eq('user_id', userId);
-          setHistory(prev => prev.map(r => r.id === actualRecordId ? { ...r, status: 'failed', lifecycle: 'expired' } : r));
-          generatingRef.current = false;
-          setIsGenerating(false);
-          return '';
-        }
-
-        // Use fetch with 300s timeout instead of supabase.functions.invoke (which has shorter default timeout)
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 300_000);
-
-        try {
-          await adminFetch<{ id: string }>(
-            '/generate',
-            {
-              method: 'POST',
-              body: JSON.stringify({
-                prompt: prompt.trim(),
-                aspectRatio,
-                styleStrength,
-                modelId: modelConfig.id,
-              }),
-              signal: controller.signal,
-            },
-            accessToken
-          );
-          clearTimeout(timeoutId);
-
-          console.log('[FE] Edge Function call completed successfully');
-        } catch (fetchErr: unknown) {
-          clearTimeout(timeoutId);
-          if (fetchErr instanceof DOMException && fetchErr.name === 'AbortError') {
-            console.error('[FE] Edge Function fetch aborted (timeout after 300s)');
-          } else {
-            console.error('[FE] Edge Function fetch error:', getErrorMessage(fetchErr));
-          }
-          console.log('[FE] [LC] Marking record as failed due to fetch error, recordId:', actualRecordId);
-          await supabase
-            .from('generations')
-            .update({ status: 'failed', picture_lifecycle: 'expired' })
-            .eq('id', actualRecordId)
-            .eq('user_id', userId);
-          setHistory(prev => prev.map(r => r.id === actualRecordId ? { ...r, status: 'failed', lifecycle: 'expired' } : r));
-          generatingRef.current = false;
-          setIsGenerating(false);
-          console.log('[FE] ========== GENERATE END (Edge Function fetch error) ==========');
-          return '';
-        }
-
-        // Refresh history to pick up DB update
-        console.log('[FE] Refreshing history after successful Edge Function call...');
-        await loadHistory();
-        console.log('[FE] History refreshed');
-      } else {
-        // Local fallback: simulate generation
-        console.log('[FE] Local fallback: simulating generation...');
-        await new Promise(r => setTimeout(r, 2000 + Math.random() * 1500));
-        const demoImages = [
-          '/images/gen-sample-1.jpg',
-          '/images/gen-sample-2.jpg',
-          '/images/gen-sample-3.jpg',
-          '/images/gen-sample-4.jpg',
-          '/images/gen-sample-5.jpg',
-          '/images/gen-sample-6.jpg',
-        ];
-        const imageUrl = demoImages[Math.floor(Math.random() * demoImages.length)];
-        const completedRecord: GenerationRecord = { ...pendingRecord, status: 'completed', imageUrl };
-        const all = loadLocalHistory(userId);
-        const updated = [completedRecord, ...all.filter(r => r.id !== actualRecordId)];
-        saveLocalHistory(userId, updated);
-        setHistory(prev => prev.map(r => r.id === actualRecordId ? completedRecord : r));
-        console.log('[FE] Local simulation completed');
-      }
+      await loadHistory();
 
       generatingRef.current = false;
       setIsGenerating(false);
       console.log('[FE] ========== GENERATE END (success) ==========');
-      return actualRecordId;
+      return response.id;
     } catch (err: unknown) {
       toast.error('生成异常: ' + getErrorMessage(err));
       console.error('[FE] ========== GENERATE END (CRASH) ==========');
@@ -374,7 +210,7 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
       setIsGenerating(false);
       return '';
     }
-  }, [userId, loadHistory, models]);
+  }, [getAccessToken, loadHistory, models, userId]);
 
   // Toggle favorite
   const toggleFavorite = useCallback(async (id: string) => {
@@ -383,28 +219,35 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     if (!record) return;
     const nextFavorite = !record.isFavorite;
 
-    if (supabaseEnabled) {
-      await supabase.from('generations').update({ is_favorite: nextFavorite }).eq('id', id).eq('user_id', userId);
-    }
+    const accessToken = await getAccessToken();
+    if (!accessToken) return;
+
+    await adminFetch(
+      `/my/generations/${id}/favorite`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ isFavorite: nextFavorite }),
+      },
+      accessToken
+    );
+
     setHistory(prev => {
-      const next = prev.map(r => r.id === id ? { ...r, isFavorite: nextFavorite } : r);
-      if (!supabaseEnabled) saveLocalHistory(userId, next);
-      return next;
+      return prev.map(r => r.id === id ? { ...r, isFavorite: nextFavorite } : r);
     });
-  }, [userId, history]);
+  }, [getAccessToken, history, userId]);
 
   // Delete
   const deleteRecord = useCallback(async (id: string) => {
     if (!userId) return;
-    if (supabaseEnabled) {
-      await supabase.from('generations').delete().eq('id', id).eq('user_id', userId);
-    }
+    const accessToken = await getAccessToken();
+    if (!accessToken) return;
+
+    await adminFetch(`/my/generations/${id}`, { method: 'DELETE' }, accessToken);
+
     setHistory(prev => {
-      const next = prev.filter(r => r.id !== id);
-      if (!supabaseEnabled) saveLocalHistory(userId, next);
-      return next;
+      return prev.filter(r => r.id !== id);
     });
-  }, [userId]);
+  }, [getAccessToken, userId]);
 
   const favoriteRecords = history.filter(r => r.isFavorite);
 

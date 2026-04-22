@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
-import { Zap } from 'lucide-react';
+import { Zap, AlertCircle } from 'lucide-react';
 import type { AspectRatio } from '../hooks/useGeneration';
 import type { ModelConfig } from '../pages/admin/AdminModels';
 
@@ -14,11 +14,13 @@ interface GenerateConsoleProps {
   isGenerating: boolean;
   isLoggedIn: boolean;
   models: ModelConfig[];
+  modelsError: string | null;
+  modelsLoading: boolean;
   onGenerate: (prompt: string, aspectRatio: AspectRatio, styleStrength: number, engine: string) => Promise<string>;
   onRequireAuth: () => void;
 }
 
-export default function GenerateConsole({ isGenerating, isLoggedIn, models, onGenerate, onRequireAuth }: GenerateConsoleProps) {
+export default function GenerateConsole({ isGenerating, isLoggedIn, models, modelsError, modelsLoading, onGenerate, onRequireAuth }: GenerateConsoleProps) {
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
   const [styleStrength, setStyleStrength] = useState(75);
@@ -44,6 +46,14 @@ export default function GenerateConsole({ isGenerating, isLoggedIn, models, onGe
     await onGenerate(prompt.trim(), aspectRatio, styleStrength, engine);
     setPrompt('');
   }, [prompt, aspectRatio, styleStrength, engine, isLoggedIn, onGenerate, onRequireAuth]);
+
+  const buttonLabel = useMemo(() => {
+    if (isGenerating) return '生成中...';
+    if (modelsLoading) return '加载模型...';
+    if (modelsError) return '模型服务异常';
+    if (enabledModels.length === 0) return '无可用模型';
+    return 'EXECUTE · 执行';
+  }, [isGenerating, modelsLoading, modelsError, enabledModels.length]);
 
   return (
     <div className="liquid-glass w-full max-w-[540px] p-6 lg:p-8">
@@ -113,9 +123,16 @@ export default function GenerateConsole({ isGenerating, isLoggedIn, models, onGe
           <select
             value={engine}
             onChange={e => setPreferredEngine(e.target.value)}
-            className="w-full bg-transparent border border-[#262626] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none appearance-none cursor-pointer font-mono-data"
+            disabled={modelsLoading || !!modelsError || enabledModels.length === 0}
+            className="w-full bg-transparent border border-[#262626] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none appearance-none cursor-pointer font-mono-data disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {enabledModels.length === 0 && (
+            {modelsLoading && (
+              <option value="loading" className="bg-black text-white">加载中...</option>
+            )}
+            {modelsError && (
+              <option value="error" className="bg-black text-white">服务异常</option>
+            )}
+            {enabledModels.length === 0 && !modelsLoading && !modelsError && (
               <option value="gpt-image-2" className="bg-black text-white">gpt-image-2</option>
             )}
             {enabledModels.map(m => (
@@ -124,13 +141,19 @@ export default function GenerateConsole({ isGenerating, isLoggedIn, models, onGe
               </option>
             ))}
           </select>
+          {modelsError && (
+            <div className="mt-2 flex items-center gap-1.5 text-red-400 text-[11px]">
+              <AlertCircle size={12} />
+              <span className="font-mono-data">{modelsError}</span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Generate Button */}
       <button
         onClick={handleGenerate}
-        disabled={isGenerating || !prompt.trim() || enabledModels.length === 0}
+        disabled={isGenerating || !prompt.trim() || enabledModels.length === 0 || modelsLoading || !!modelsError}
         className="relative w-full bg-black text-white text-[13px] font-medium uppercase tracking-[0.2em] py-4 flex items-center justify-center gap-3 hover:bg-[#111] transition-colors disabled:opacity-40 disabled:cursor-not-allowed border border-[#262626]"
       >
         {/* REC dot */}
@@ -145,7 +168,7 @@ export default function GenerateConsole({ isGenerating, isLoggedIn, models, onGe
         </span>
 
         <Zap size={15} className={isGenerating ? 'animate-pulse' : ''} />
-        {isGenerating ? '生成中...' : enabledModels.length === 0 ? '无可用模型' : 'EXECUTE · 执行'}
+        {buttonLabel}
       </button>
     </div>
   );

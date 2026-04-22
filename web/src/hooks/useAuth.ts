@@ -1,11 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, supabaseEnabled } from '@/lib/supabase';
+import { adminFetch } from '@/lib/admin-api';
 
 type SupabaseUser = {
   id: string;
   email?: string | null;
   user_metadata?: Record<string, unknown>;
 };
+
+type SupabaseSession = {
+  user: SupabaseUser;
+  access_token?: string;
+};
+
+interface WebMePayload {
+  id: string;
+  email: string;
+  username: string;
+  inviteCode: string | null;
+  inviteCount: number;
+  isDisabled: boolean;
+  isAdmin: boolean;
+}
 
 // ======== Types ========
 export interface UserProfile {
@@ -19,9 +35,9 @@ export interface UserProfile {
 // ======== Hook ========
 export function useAuth() {
   const authClient = supabase.auth as unknown as {
-    getSession: () => Promise<{ data: { session: { user: SupabaseUser } | null } }>;
+    getSession: () => Promise<{ data: { session: SupabaseSession | null } }>;
     onAuthStateChange: (
-      callback: (event: string, session: { user: SupabaseUser } | null) => void | Promise<void>
+      callback: (event: string, session: SupabaseSession | null) => void
     ) => { data: { subscription: { unsubscribe: () => void } } };
     signInWithPassword: (args: { email: string; password: string }) => Promise<{ error: { message: string } | null }>;
     signUp: (args: {
@@ -41,26 +57,18 @@ export function useAuth() {
   const [error, setError] = useState('');
   const [confirmationMessage, setConfirmationMessage] = useState('');
 
-  const loadProfile = useCallback(async (authUser: SupabaseUser | null) => {
-    if (!authUser) {
+  const loadProfile = useCallback(async (authUser: SupabaseUser | null, accessToken?: string | null) => {
+    if (!authUser || !accessToken) {
       setProfile(null);
       return;
     }
 
-    const [{ data: profileRow }, { count }] = await Promise.all([
-      supabase
-        .from('profiles')
-        .select('username, invite_code, is_disabled')
-        .eq('user_id', authUser.id)
-        .single(),
-      supabase
-        .from('referrals')
-        .select('id', { count: 'exact', head: true })
-        .eq('inviter_id', authUser.id),
-    ]);
+    const me = await adminFetch<WebMePayload>('/me', {}, accessToken);
 
-    if (profileRow?.is_disabled) {
-      await authClient.signOut();
+    if (me.isDisabled) {
+      setTimeout(() => {
+        void authClient.signOut();
+      }, 0);
       setProfile(null);
       setSbUser(null);
       setError('账号已被禁用');
@@ -68,13 +76,17 @@ export function useAuth() {
     }
 
     setProfile({
-      id: authUser.id,
-      username: profileRow?.username || authUser.user_metadata?.username || authUser.email?.split('@')[0] || 'User',
-      email: authUser.email || '',
-      inviteCode: profileRow?.invite_code || '',
-      inviteCount: count || 0,
+      id: me.id,
+      username:
+        me.username ||
+        (typeof authUser.user_metadata?.username === 'string' ? authUser.user_metadata.username : '') ||
+        authUser.email?.split('@')[0] ||
+        'User',
+      email: me.email || authUser.email || '',
+      inviteCode: me.inviteCode || '',
+      inviteCount: me.inviteCount || 0,
     });
-  }, []);
+  }, [authClient]);
 
   // Listen for Supabase auth state changes
   useEffect(() => {
@@ -83,14 +95,20 @@ export function useAuth() {
     authClient.getSession().then(async ({ data: { session } }) => {
       const authUser = session?.user ?? null;
       setSbUser(authUser);
-      await loadProfile(authUser);
+      await loadProfile(authUser, session?.access_token);
+      setLoading(false);
+    }).catch((loadError) => {
+      setError(loadError instanceof Error ? loadError.message : String(loadError));
       setLoading(false);
     });
 
-    const { data: { subscription } } = authClient.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = authClient.onAuthStateChange((_event, session) => {
       const authUser = session?.user ?? null;
       setSbUser(authUser);
-      await loadProfile(authUser);
+      void loadProfile(authUser, session?.access_token).catch((loadError) => {
+        setError(loadError instanceof Error ? loadError.message : String(loadError));
+        setProfile(null);
+      });
     });
 
     return () => subscription.unsubscribe();

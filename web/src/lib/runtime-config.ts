@@ -20,14 +20,15 @@ export interface ResolvedRuntimeConfig {
   runtime: 'docker' | 'local';
   supabaseUrl: string;
   supabaseAnonKey: string;
+  adminApiUrl: string;
   supabaseEnabled: boolean;
   gate: RuntimeGate;
 }
 
 export interface HealthPayload {
-  ready: boolean;
-  missingResources: string[];
-  message: string;
+  ok: boolean;
+  missing: string[];
+  error?: string;
 }
 
 export interface HealthProbeResult {
@@ -36,20 +37,15 @@ export interface HealthProbeResult {
   payload: HealthPayload | null;
 }
 
-export interface FunctionProbeResult {
-  name: string;
-  status: number;
-}
-
 export type InitializationReadiness =
-  | { kind: 'ready'; message: string; missingResources: []; missingFunctions: [] }
-  | { kind: 'network-error'; message: string; missingResources: []; missingFunctions: [] }
-  | { kind: 'functions-missing'; message: string; missingFunctions: string[]; missingResources: [] }
-  | { kind: 'backend-uninitialized'; message: string; missingResources: string[]; missingFunctions: [] };
+  | { kind: 'ready'; message: string; missingResources: [] }
+  | { kind: 'network-error'; message: string; missingResources: [] }
+  | { kind: 'backend-uninitialized'; message: string; missingResources: string[] };
 
 const REQUIRED_RUNTIME_KEYS = [
   'VITE_SUPABASE_URL',
   'VITE_SUPABASE_ANON_KEY',
+  'VITE_ADMIN_API_URL',
 ] as const;
 
 function normalizeValue(value: string | undefined) {
@@ -67,6 +63,9 @@ export function resolveRuntimeConfig({
   const supabaseAnonKey = normalizeValue(
     runtimeConfig.VITE_SUPABASE_ANON_KEY || envConfig.VITE_SUPABASE_ANON_KEY
   );
+  const adminApiUrl = normalizeValue(
+    runtimeConfig.VITE_ADMIN_API_URL || envConfig.VITE_ADMIN_API_URL
+  );
   const supabaseEnabled = supabaseUrl.length > 0 && supabaseAnonKey.length > 0;
   const missingKeys = REQUIRED_RUNTIME_KEYS.filter((key) =>
     normalizeValue(runtimeConfig[key] || envConfig[key]).length === 0
@@ -77,6 +76,7 @@ export function resolveRuntimeConfig({
       runtime,
       supabaseUrl,
       supabaseAnonKey,
+      adminApiUrl,
       supabaseEnabled,
       gate: { kind: 'config-missing', missingKeys: [...missingKeys] },
     };
@@ -87,6 +87,7 @@ export function resolveRuntimeConfig({
       runtime,
       supabaseUrl,
       supabaseAnonKey,
+      adminApiUrl,
       supabaseEnabled,
       gate: { kind: 'check-required', missingKeys: [] },
     };
@@ -96,6 +97,7 @@ export function resolveRuntimeConfig({
     runtime,
     supabaseUrl,
     supabaseAnonKey,
+    adminApiUrl,
     supabaseEnabled,
     gate: { kind: 'pass-through', missingKeys: [] },
   };
@@ -103,45 +105,13 @@ export function resolveRuntimeConfig({
 
 export function evaluateInitializationReadiness({
   health,
-  functionProbes,
 }: {
   health: HealthProbeResult;
-  functionProbes: FunctionProbeResult[];
 }): InitializationReadiness {
   if (!health.reachable) {
     return {
       kind: 'network-error',
-      message: 'Supabase health endpoint is unreachable',
-      missingResources: [],
-      missingFunctions: [],
-    };
-  }
-
-  const missingFunctions = functionProbes
-    .filter((probe) => probe.status === 404)
-    .map((probe) => probe.name);
-  const unreachableFunctions = functionProbes
-    .filter((probe) => probe.status === 0)
-    .map((probe) => probe.name);
-
-  if (unreachableFunctions.length > 0) {
-    return {
-      kind: 'network-error',
-      message: `Unable to reach function probes: ${unreachableFunctions.join(', ')}`,
-      missingResources: [],
-      missingFunctions: [],
-    };
-  }
-
-  if (health.status === 404) {
-    missingFunctions.unshift('health');
-  }
-
-  if (missingFunctions.length > 0) {
-    return {
-      kind: 'functions-missing',
-      message: 'Required edge functions are not deployed yet',
-      missingFunctions,
+      message: 'Admin health endpoint is unreachable',
       missingResources: [],
     };
   }
@@ -151,24 +121,21 @@ export function evaluateInitializationReadiness({
       kind: 'backend-uninitialized',
       message: `Health endpoint returned HTTP ${health.status}`,
       missingResources: [],
-      missingFunctions: [],
     };
   }
 
-  if (health.payload.ready) {
+  if (health.payload.ok) {
     return {
       kind: 'ready',
-      message: health.payload.message,
+      message: 'Admin backend is ready.',
       missingResources: [],
-      missingFunctions: [],
     };
   }
 
   return {
     kind: 'backend-uninitialized',
-    message: health.payload.message,
-    missingResources: health.payload.missingResources,
-    missingFunctions: [],
+    message: health.payload.error || 'Admin backend is not ready.',
+    missingResources: health.payload.missing,
   };
 }
 

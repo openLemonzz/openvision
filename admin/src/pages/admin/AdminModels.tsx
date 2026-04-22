@@ -1,10 +1,17 @@
 import { useEffect, useState } from 'react';
-import { Save, Key, Globe, Sliders, ToggleLeft, ToggleRight, AlertTriangle, Check } from 'lucide-react';
+import { Save, Key, Globe, Sliders, ToggleLeft, ToggleRight, AlertTriangle, Check, Plus, Trash2 } from 'lucide-react';
 import type { ApiProtocol, ModelConfig } from '@/lib/types';
+import {
+  createEditableModels,
+  createModelDraft,
+  toPersistedModels,
+  validateEditableModels,
+  type EditableModelConfig,
+} from './model-drafts';
 
 interface AdminModelsProps {
   models: ModelConfig[];
-  onUpdateModels: (models: ModelConfig[]) => void;
+  onUpdateModels: (models: ModelConfig[]) => Promise<void>;
 }
 
 const SIZE_OPTIONS = ['1024x1024', '1024x576', '768x1024', '576x1024', '1792x1024', '1024x1792'];
@@ -17,22 +24,57 @@ const PROTOCOL_OPTIONS: { value: ApiProtocol; label: string }[] = [
 ];
 
 export default function AdminModels({ models, onUpdateModels }: AdminModelsProps) {
-  const [localModels, setLocalModels] = useState<ModelConfig[]>(models);
+  const [localModels, setLocalModels] = useState<EditableModelConfig[]>(() => createEditableModels(models));
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
-    setLocalModels(models);
+    setLocalModels(createEditableModels(models));
   }, [models]);
 
-  const updateModel = (id: string, updates: Partial<ModelConfig>) => {
-    setLocalModels(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
+  const updateModel = (draftKey: string, updates: Partial<ModelConfig>) => {
+    setLocalModels(prev => prev.map(model => model.draftKey === draftKey ? { ...model, ...updates } : model));
     setSaved(false);
+    setErrors([]);
   };
 
-  const handleSave = () => {
-    onUpdateModels(localModels);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  const addModel = () => {
+    setLocalModels(prev => [...prev, createModelDraft(prev)]);
+    setSaved(false);
+    setErrors([]);
+  };
+
+  const removeDraftModel = (draftKey: string) => {
+    setLocalModels(prev => prev.filter((model) => model.draftKey !== draftKey));
+    setSaved(false);
+    setErrors([]);
+  };
+
+  const handleSave = async () => {
+    const validationErrors = validateEditableModels(localModels);
+    if (validationErrors.length > 0) {
+      setErrors(validationErrors);
+      setSaved(false);
+      return;
+    }
+
+    setSaving(true);
+    setErrors([]);
+
+    try {
+      const nextModels = toPersistedModels(localModels);
+      await onUpdateModels(nextModels);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      setErrors([
+        error instanceof Error ? error.message : String(error),
+      ]);
+      setSaved(false);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -44,17 +86,29 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
             管理 AI 图片生成模型的 API 接入参数
           </p>
         </div>
-        <button
-          onClick={handleSave}
-          className={`flex items-center gap-2 px-5 py-2.5 text-[11px] uppercase tracking-[0.12em] font-mono-data transition-all ${
-            saved
-              ? 'bg-emerald-500 text-white'
-              : 'bg-white text-black hover:bg-[#e0e0e0]'
-          }`}
-        >
-          {saved ? <Check size={13} /> : <Save size={13} />}
-          {saved ? '已保存' : '保存配置'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={addModel}
+            className="flex items-center gap-2 px-5 py-2.5 text-[11px] uppercase tracking-[0.12em] font-mono-data border border-[#333] text-white hover:border-white transition-colors"
+          >
+            <Plus size={13} />
+            新增模型
+          </button>
+          <button
+            onClick={() => {
+              void handleSave();
+            }}
+            disabled={saving}
+            className={`flex items-center gap-2 px-5 py-2.5 text-[11px] uppercase tracking-[0.12em] font-mono-data transition-all disabled:opacity-60 ${
+              saved
+                ? 'bg-emerald-500 text-white'
+                : 'bg-white text-black hover:bg-[#e0e0e0]'
+            }`}
+          >
+            {saved ? <Check size={13} /> : <Save size={13} />}
+            {saving ? '保存中...' : saved ? '已保存' : '保存配置'}
+          </button>
+        </div>
       </div>
 
       {/* Warning banner */}
@@ -67,15 +121,28 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
         </div>
       </div>
 
+      {errors.length > 0 && (
+        <div className="border border-red-400/30 bg-red-400/5 p-4 mb-6">
+          <p className="text-[11px] text-red-300 font-mono-data mb-2">保存失败，请先修正以下问题：</p>
+          <ul className="space-y-1">
+            {errors.map((error) => (
+              <li key={error} className="text-[11px] text-red-200">
+                {error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Model cards */}
       <div className="space-y-4">
-        {localModels.map((model, index) => (
-          <div key={index} className="border border-[#222] bg-[#111]">
+        {localModels.map((model) => (
+          <div key={model.draftKey} className="border border-[#222] bg-[#111]">
             {/* Card header */}
             <div className="flex items-center justify-between px-5 py-3 border-b border-[#222]">
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => updateModel(model.id, { enabled: !model.enabled })}
+                  onClick={() => updateModel(model.draftKey, { enabled: !model.enabled })}
                   className="text-[#888] hover:text-white transition-colors"
                 >
                   {model.enabled ? (
@@ -95,13 +162,24 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                   </div>
                 </div>
               </div>
-              <span className={`text-[9px] font-mono-data px-2 py-0.5 border ${
-                model.enabled
-                  ? 'text-emerald-400 border-emerald-400/30'
-                  : 'text-[#555] border-[#333]'
-              }`}>
-                {model.enabled ? '已启用' : '已停用'}
-              </span>
+              <div className="flex items-center gap-3">
+                {model.isNew && (
+                  <button
+                    onClick={() => removeDraftModel(model.draftKey)}
+                    className="text-[#666] hover:text-red-400 transition-colors"
+                    title="移除未保存模型"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+                <span className={`text-[9px] font-mono-data px-2 py-0.5 border ${
+                  model.enabled
+                    ? 'text-emerald-400 border-emerald-400/30'
+                    : 'text-[#555] border-[#333]'
+                }`}>
+                  {model.enabled ? '已启用' : '已停用'}
+                </span>
+              </div>
             </div>
 
             {/* Card body */}
@@ -114,7 +192,7 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                 <input
                   type="text"
                   value={model.name}
-                  onChange={e => updateModel(model.id, { name: e.target.value })}
+                  onChange={e => updateModel(model.draftKey, { name: e.target.value })}
                   placeholder="GPT-Image-2"
                   className="w-full bg-transparent border border-[#333] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none placeholder:text-[#444] font-mono-data"
                 />
@@ -128,8 +206,22 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                 <input
                   type="text"
                   value={model.id}
-                  onChange={e => updateModel(model.id, { id: e.target.value })}
+                  onChange={e => updateModel(model.draftKey, { id: e.target.value })}
                   placeholder="gpt-image-2"
+                  className="w-full bg-transparent border border-[#333] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none placeholder:text-[#444] font-mono-data"
+                />
+              </div>
+
+              {/* Provider */}
+              <div>
+                <label className="flex items-center gap-1.5 text-[10px] text-[#888] uppercase tracking-[0.15em] mb-2 font-mono-data">
+                  Provider
+                </label>
+                <input
+                  type="text"
+                  value={model.provider}
+                  onChange={e => updateModel(model.draftKey, { provider: e.target.value })}
+                  placeholder="Custom API"
                   className="w-full bg-transparent border border-[#333] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none placeholder:text-[#444] font-mono-data"
                 />
               </div>
@@ -143,7 +235,7 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                 <input
                   type="password"
                   value={model.apiKey}
-                  onChange={e => updateModel(model.id, { apiKey: e.target.value })}
+                  onChange={e => updateModel(model.draftKey, { apiKey: e.target.value })}
                   placeholder={model.hasApiKey ? '留空表示保持当前密钥' : 'sk-...'}
                   className="w-full bg-transparent border border-[#333] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none placeholder:text-[#444] font-mono-data"
                 />
@@ -163,7 +255,7 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                 <input
                   type="text"
                   value={model.apiEndpoint}
-                  onChange={e => updateModel(model.id, { apiEndpoint: e.target.value })}
+                  onChange={e => updateModel(model.draftKey, { apiEndpoint: e.target.value })}
                   placeholder="https://api.example.com/v1"
                   className="w-full bg-transparent border border-[#333] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none placeholder:text-[#444] font-mono-data"
                 />
@@ -177,7 +269,7 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                 </label>
                 <select
                   value={model.protocol}
-                  onChange={e => updateModel(model.id, { protocol: e.target.value as ApiProtocol })}
+                  onChange={e => updateModel(model.draftKey, { protocol: e.target.value as ApiProtocol })}
                   className="w-full bg-transparent border border-[#333] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none font-mono-data"
                 >
                   {PROTOCOL_OPTIONS.map(p => (
@@ -194,7 +286,7 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                 </label>
                 <select
                   value={model.defaultSize}
-                  onChange={e => updateModel(model.id, { defaultSize: e.target.value })}
+                  onChange={e => updateModel(model.draftKey, { defaultSize: e.target.value })}
                   className="w-full bg-transparent border border-[#333] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none font-mono-data"
                 >
                   {SIZE_OPTIONS.map(s => (
@@ -212,7 +304,7 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                 <input
                   type="number"
                   value={model.maxTokens}
-                  onChange={e => updateModel(model.id, { maxTokens: Number(e.target.value) })}
+                  onChange={e => updateModel(model.draftKey, { maxTokens: Number(e.target.value) })}
                   className="w-full bg-transparent border border-[#333] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none font-mono-data"
                 />
               </div>
@@ -232,7 +324,7 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                   max={2}
                   step={0.1}
                   value={model.temperature}
-                  onChange={e => updateModel(model.id, { temperature: Number(e.target.value) })}
+                  onChange={e => updateModel(model.draftKey, { temperature: Number(e.target.value) })}
                   className="w-full h-[2px] appearance-none bg-[#333] accent-white cursor-pointer"
                 />
                 <div className="flex justify-between mt-1">

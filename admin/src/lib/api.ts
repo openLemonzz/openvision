@@ -1,14 +1,22 @@
 import { apiBaseUrl, supabase } from './supabase';
 
-export async function apiFetch<T>(path: string, init: RequestInit = {}) {
-  const { data } = await supabase.auth.getSession();
-  const accessToken = data.session?.access_token;
+export async function apiFetch<T>(
+  path: string,
+  init: RequestInit = {},
+  accessToken?: string | null
+) {
+  let resolvedAccessToken = accessToken;
+  if (typeof resolvedAccessToken === 'undefined') {
+    const { data } = await supabase.auth.getSession();
+    resolvedAccessToken = data.session?.access_token ?? null;
+  }
+
   const headers = new Headers(init.headers);
 
   headers.set('Content-Type', 'application/json');
 
-  if (accessToken) {
-    headers.set('Authorization', `Bearer ${accessToken}`);
+  if (resolvedAccessToken) {
+    headers.set('Authorization', `Bearer ${resolvedAccessToken}`);
   }
 
   const response = await fetch(`${apiBaseUrl}${path}`, {

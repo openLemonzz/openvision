@@ -1,15 +1,27 @@
 -- ============================================================
--- VISION (影境) - Supabase schema snapshot
--- Primary deployment path:
---   1. app/supabase/migrations/*.sql
---   2. app/supabase/config.toml
---   3. npm run deploy:supabase:init
---
--- This file is kept as a readable snapshot / manual fallback and
--- mirrors the initial migration.
+-- VISION canonical database schema
+-- Apply with:
+--   npm run db:apply
 -- ============================================================
 
-create table public.generations (
+drop trigger if exists on_auth_user_created on auth.users;
+
+drop function if exists public.handle_invite_on_signup();
+drop function if exists public.get_user_invite_count(uuid);
+
+drop policy if exists "Users can view own generations" on public.generations;
+drop policy if exists "Users can insert own generations" on public.generations;
+drop policy if exists "Users can update own generations" on public.generations;
+drop policy if exists "Users can delete own generations" on public.generations;
+drop policy if exists "Users can view own profile" on public.profiles;
+drop policy if exists "Users can update own profile" on public.profiles;
+drop policy if exists "Users can view own referrals" on public.referrals;
+drop policy if exists "Anyone can view enabled models" on public.model_configs;
+drop policy if exists "Users can view own invites" on public.invites;
+drop policy if exists "Anyone can insert invites" on public.invites;
+drop policy if exists "Users can update own invites" on public.invites;
+
+create table if not exists public.generations (
   id uuid primary key default gen_random_uuid(),
   picture_id text unique,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -26,29 +38,7 @@ create table public.generations (
   created_at timestamptz not null default now()
 );
 
-alter table public.generations enable row level security;
-
-create policy "Users can view own generations"
-  on public.generations for select
-  using (auth.uid() = user_id);
-
-create policy "Users can insert own generations"
-  on public.generations for insert
-  with check (auth.uid() = user_id);
-
-create policy "Users can update own generations"
-  on public.generations for update
-  using (auth.uid() = user_id);
-
-create policy "Users can delete own generations"
-  on public.generations for delete
-  using (auth.uid() = user_id);
-
-create index idx_generations_user_id on public.generations(user_id);
-create index idx_generations_created_at on public.generations(created_at desc);
-create index idx_generations_picture_id on public.generations(picture_id);
-
-create table public.profiles (
+create table if not exists public.profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   username text not null,
   invite_code text not null unique,
@@ -56,35 +46,19 @@ create table public.profiles (
   created_at timestamptz not null default now()
 );
 
-alter table public.profiles enable row level security;
-
-create policy "Users can view own profile"
-  on public.profiles for select
-  using (auth.uid() = user_id);
-
-create policy "Users can update own profile"
-  on public.profiles for update
-  using (auth.uid() = user_id);
-
-create table public.admin_roles (
+create table if not exists public.admin_roles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   created_at timestamptz not null default now()
 );
 
-create table public.referrals (
+create table if not exists public.referrals (
   id uuid primary key default gen_random_uuid(),
   inviter_id uuid not null references auth.users(id) on delete cascade,
   invitee_id uuid not null unique references auth.users(id) on delete cascade,
   created_at timestamptz not null default now()
 );
 
-alter table public.referrals enable row level security;
-
-create policy "Users can view own referrals"
-  on public.referrals for select
-  using (auth.uid() = inviter_id or auth.uid() = invitee_id);
-
-create table public.model_configs (
+create table if not exists public.model_configs (
   id text primary key,
   name text not null,
   provider text not null,
@@ -99,77 +73,18 @@ create table public.model_configs (
   updated_at timestamptz not null default now()
 );
 
-create index idx_profiles_invite_code on public.profiles(invite_code);
-create index idx_referrals_inviter_id on public.referrals(inviter_id);
+drop table if exists public.invites cascade;
 
-create table public.invites (
-  id uuid primary key default gen_random_uuid(),
-  inviter_id uuid not null references auth.users(id) on delete cascade,
-  invitee_id uuid references auth.users(id) on delete set null,
-  invite_code text not null unique,
-  created_at timestamptz not null default now()
-);
+alter table public.generations disable row level security;
+alter table public.profiles disable row level security;
+alter table public.referrals disable row level security;
+alter table public.model_configs disable row level security;
 
-alter table public.invites enable row level security;
-
-create policy "Users can view own invites"
-  on public.invites for select
-  using (auth.uid() = inviter_id or auth.uid() = invitee_id);
-
-create policy "Anyone can insert invites"
-  on public.invites for insert
-  with check (true);
-
-create policy "Users can update own invites"
-  on public.invites for update
-  using (auth.uid() = inviter_id);
-
-create index idx_invites_inviter_id on public.invites(inviter_id);
-create index idx_invites_invite_code on public.invites(invite_code);
-
-create or replace function public.get_user_invite_count(user_uuid uuid)
-returns integer
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  return (
-    select count(*)::integer
-    from public.invites
-    where inviter_id = user_uuid and invitee_id is not null
-  );
-end;
-$$;
-
-create or replace function public.handle_invite_on_signup()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  invite_record record;
-begin
-  if new.raw_user_meta_data->>'invite_code' is not null then
-    select *
-    into invite_record
-    from public.invites
-    where invite_code = new.raw_user_meta_data->>'invite_code'
-      and invitee_id is null;
-
-    if found then
-      update public.invites
-      set invitee_id = new.id
-      where id = invite_record.id;
-    end if;
-  end if;
-
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_created on auth.users;
+create index if not exists idx_generations_user_id on public.generations(user_id);
+create index if not exists idx_generations_created_at on public.generations(created_at desc);
+create index if not exists idx_generations_picture_id on public.generations(picture_id);
+create index if not exists idx_profiles_invite_code on public.profiles(invite_code);
+create index if not exists idx_referrals_inviter_id on public.referrals(inviter_id);
 
 create or replace function public.generate_invite_code()
 returns text
@@ -257,5 +172,3 @@ insert into public.model_configs (
 ) values
   ('gpt-image-2', 'GPT-Image-2', 'OpenAI Compatible', 'https://api.example.com/v1/images/generations', true, 1000, 0.7, '1024x1024', 'openai')
 on conflict (id) do nothing;
-
--- Storage bucket is managed by root supabase/config.toml.

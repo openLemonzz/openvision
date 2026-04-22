@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { apiFetch } from '@/lib/api';
 import type { AdminMe, AdminUser, GenerationRecord, ModelConfig } from '@/lib/types';
+import { handleAdminAuthStateChange } from './admin-auth-state';
 
 export function useAdminApp() {
   const [me, setMe] = useState<AdminMe | null>(null);
@@ -10,8 +11,15 @@ export function useAdminApp() {
   const [history, setHistory] = useState<GenerationRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(async () => {
-    const currentMe = await apiFetch<AdminMe>('/me');
+  const clearAdminState = useCallback(() => {
+    setMe(null);
+    setUsers([]);
+    setModels([]);
+    setHistory([]);
+  }, []);
+
+  const refresh = useCallback(async (accessToken?: string | null) => {
+    const currentMe = await apiFetch<AdminMe>('/me', {}, accessToken);
     setMe(currentMe);
 
     if (!currentMe.isAdmin) {
@@ -22,9 +30,9 @@ export function useAdminApp() {
     }
 
     const [nextUsers, nextModels, nextHistory] = await Promise.all([
-      apiFetch<AdminUser[]>('/users'),
-      apiFetch<ModelConfig[]>('/models'),
-      apiFetch<GenerationRecord[]>('/generations'),
+      apiFetch<AdminUser[]>('/users', {}, accessToken),
+      apiFetch<ModelConfig[]>('/models', {}, accessToken),
+      apiFetch<GenerationRecord[]>('/generations', {}, accessToken),
     ]);
 
     setUsers(nextUsers);
@@ -41,15 +49,15 @@ export function useAdminApp() {
         const { data } = await supabase.auth.getSession();
         if (!data.session) {
           if (!alive) return;
-          setMe(null);
+          clearAdminState();
           setLoading(false);
           return;
         }
 
-        await refresh();
+        await refresh(data.session.access_token);
       } catch {
         if (!alive) return;
-        setMe(null);
+        clearAdminState();
       } finally {
         if (alive) {
           setLoading(false);
@@ -61,51 +69,50 @@ export function useAdminApp() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!alive) return;
-
-      if (!session) {
-        setMe(null);
-        setUsers([]);
-        setModels([]);
-        setHistory([]);
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      try {
-        await refresh();
-      } finally {
-        if (alive) {
-          setLoading(false);
-        }
-      }
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      handleAdminAuthStateChange({
+        session: session
+          ? { access_token: session.access_token }
+          : null,
+        clearAdminState: () => {
+          if (!alive) return;
+          clearAdminState();
+        },
+        setLoading: (nextLoading) => {
+          if (!alive) return;
+          setLoading(nextLoading);
+        },
+        syncAdminState: async (accessToken) => {
+          if (!alive) return;
+          await refresh(accessToken);
+        },
+        onSyncError: () => {
+          if (!alive) return;
+          clearAdminState();
+        },
+      });
     });
 
     return () => {
       alive = false;
       subscription.unsubscribe();
     };
-  }, [refresh]);
+  }, [clearAdminState, refresh]);
 
   const adminLogin = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      return false;
+      throw error;
     }
 
-    const currentMe = await refresh();
+    const currentMe = await refresh(data.session?.access_token);
     return currentMe.isAdmin;
   }, [refresh]);
 
   const adminLogout = useCallback(async () => {
     await supabase.auth.signOut();
-    setMe(null);
-    setUsers([]);
-    setModels([]);
-    setHistory([]);
-  }, []);
+    clearAdminState();
+  }, [clearAdminState]);
 
   const toggleUserStatus = useCallback(async (id: string) => {
     const current = users.find((user) => user.id === id);

@@ -10,13 +10,15 @@ interface HomeProps {
   isLoggedIn: boolean;
   history: GenerationRecord[];
   models: ModelConfig[];
+  modelsError: string | null;
+  modelsLoading: boolean;
   lifecycleTick: number;
   onGenerate: (prompt: string, aspectRatio: '1:1' | '16:9' | '3:4' | '9:16', styleStrength: number, engine: string) => Promise<string>;
   onRequireAuth: () => void;
   onDeleteRecord: (id: string) => void;
 }
 
-export default function Home({ isGenerating, isLoggedIn, history, models, lifecycleTick, onGenerate, onRequireAuth, onDeleteRecord }: HomeProps) {
+export default function Home({ isGenerating, isLoggedIn, history, models, modelsError, modelsLoading, lifecycleTick, onGenerate, onRequireAuth, onDeleteRecord }: HomeProps) {
   const handleGenerate = useCallback(
     (prompt: string, aspectRatio: '1:1' | '16:9' | '3:4' | '9:16', styleStrength: number, engine: string) => {
       return onGenerate(prompt, aspectRatio, styleStrength, engine);
@@ -56,6 +58,8 @@ export default function Home({ isGenerating, isLoggedIn, history, models, lifecy
             isGenerating={isGenerating}
             isLoggedIn={isLoggedIn}
             models={models}
+            modelsError={modelsError}
+            modelsLoading={modelsLoading}
             onGenerate={handleGenerate}
             onRequireAuth={onRequireAuth}
           />

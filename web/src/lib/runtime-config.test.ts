@@ -13,6 +13,7 @@ test('docker runtime with missing env enters config-missing state', () => {
       runtime: 'docker',
       VITE_SUPABASE_URL: '',
       VITE_SUPABASE_ANON_KEY: '',
+      VITE_ADMIN_API_URL: '',
     },
   });
 
@@ -21,6 +22,7 @@ test('docker runtime with missing env enters config-missing state', () => {
   assert.deepEqual(config.gate.missingKeys, [
     'VITE_SUPABASE_URL',
     'VITE_SUPABASE_ANON_KEY',
+    'VITE_ADMIN_API_URL',
   ]);
 });
 
@@ -31,12 +33,14 @@ test('docker runtime with env present requires backend readiness check', () => {
       runtime: 'docker',
       VITE_SUPABASE_URL: 'https://demo.supabase.co',
       VITE_SUPABASE_ANON_KEY: 'anon-key',
+      VITE_ADMIN_API_URL: 'http://localhost:8787/api',
     },
   });
 
   assert.equal(config.gate.kind, 'check-required');
   assert.equal(config.supabaseUrl, 'https://demo.supabase.co');
   assert.equal(config.supabaseAnonKey, 'anon-key');
+   assert.equal(config.adminApiUrl, 'http://localhost:8787/api');
 });
 
 test('local runtime without Supabase config enters config-missing state', () => {
@@ -51,93 +55,48 @@ test('local runtime without Supabase config enters config-missing state', () => 
   assert.deepEqual(config.gate.missingKeys, [
     'VITE_SUPABASE_URL',
     'VITE_SUPABASE_ANON_KEY',
+    'VITE_ADMIN_API_URL',
   ]);
 });
 
-test('missing function probes return functions-missing state', () => {
+test('admin health payload with missing resources returns backend-uninitialized state', () => {
   const readiness = evaluateInitializationReadiness({
     health: {
       reachable: true,
       status: 200,
       payload: {
-        ready: true,
-        missingResources: [],
-        message: 'ready',
+        ok: false,
+        missing: ['SUPABASE_SERVICE_ROLE_KEY'],
       },
     },
-    functionProbes: [
-      { name: 'check-email', status: 204 },
-      { name: 'admin-users', status: 404 },
-      { name: 'generate-image', status: 204 },
-    ],
-  });
-
-  assert.equal(readiness.kind, 'functions-missing');
-  assert.deepEqual(readiness.missingFunctions, ['admin-users']);
-});
-
-test('health payload with missing resources returns backend-uninitialized state', () => {
-  const readiness = evaluateInitializationReadiness({
-    health: {
-      reachable: true,
-      status: 200,
-      payload: {
-        ready: false,
-        missingResources: ['table:generations', 'bucket:images'],
-        message: 'backend is not initialized',
-      },
-    },
-    functionProbes: [
-      { name: 'check-email', status: 204 },
-      { name: 'admin-users', status: 204 },
-      { name: 'generate-image', status: 204 },
-    ],
   });
 
   assert.equal(readiness.kind, 'backend-uninitialized');
-  assert.deepEqual(readiness.missingResources, [
-    'table:generations',
-    'bucket:images',
-  ]);
+  assert.deepEqual(readiness.missingResources, ['SUPABASE_SERVICE_ROLE_KEY']);
 });
 
-test('unreachable function probe returns network-error state', () => {
+test('unreachable admin health returns network-error state', () => {
   const readiness = evaluateInitializationReadiness({
     health: {
-      reachable: true,
-      status: 200,
-      payload: {
-        ready: true,
-        missingResources: [],
-        message: 'ready',
-      },
+      reachable: false,
+      status: 0,
+      payload: null,
     },
-    functionProbes: [
-      { name: 'check-email', status: 0 },
-      { name: 'admin-users', status: 204 },
-      { name: 'generate-image', status: 204 },
-    ],
   });
 
   assert.equal(readiness.kind, 'network-error');
 });
 
-test('healthy payload with successful probes returns ready state', () => {
+test('healthy admin payload returns ready state', () => {
   const readiness = evaluateInitializationReadiness({
     health: {
       reachable: true,
       status: 200,
       payload: {
-        ready: true,
-        missingResources: [],
-        message: 'ready',
+        ok: true,
+        missing: [],
       },
     },
-    functionProbes: [
-      { name: 'check-email', status: 204 },
-      { name: 'admin-users', status: 204 },
-      { name: 'generate-image', status: 204 },
-    ],
   });
 
   assert.equal(readiness.kind, 'ready');

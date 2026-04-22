@@ -8,8 +8,6 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "deploy:supabase:init": "node ./scripts/deploy-supabase-init.mjs",
-    "test:supabase:init": "node --test ./scripts/deploy-supabase-init.test.mjs",
     "test:runtime-config": "node --experimental-strip-types --test ./src/lib/runtime-config.test.ts"
   },
   "dependencies": {

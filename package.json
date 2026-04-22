@@ -12,7 +12,7 @@
     "build:admin": "npm --prefix admin run build",
     "lint:web": "npm --prefix web run lint",
     "lint:admin": "npm --prefix admin run lint",
-    "db:migrate": "sh ./scripts/db-migrate.sh",
+    "db:apply": "sh ./scripts/db-apply.sh",
     "docker:up": "docker compose up -d --build",
     "docker:up:web": "docker compose up -d --build web",
     "docker:up:admin": "docker compose up -d --build admin",
