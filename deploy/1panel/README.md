@@ -4,8 +4,8 @@
 
 | 服务 | 说明 | 容器端口 | 宿主机端口 |
 |------|------|---------|-----------|
-| web | 前端静态页面（Nginx） | 80 | 8080 |
-| admin | 后端 API + 管理后台（Node.js） | 8787 | 8787 |
+| web | 前端静态页面（Nginx） | 80 | 9901 |
+| admin | 后端 API + 管理后台（Node.js） | 9902 | 9902 |
 
 外部访问通过 **1Panel OpenResty** 反向代理到上述端口，不直接暴露端口到公网。
 
@@ -87,7 +87,7 @@ VITE_ADMIN_APP_URL=https://admin.你的域名.com
 VITE_SUPABASE_URL=https://你的项目.supabase.co
 VITE_SUPABASE_ANON_KEY=你的anon-key
 VITE_API_BASE_URL=/api
-PORT=8787
+PORT=9902
 WEB_ORIGIN=https://你的域名.com
 DATABASE_URL=postgresql://postgres.xxxxx:密码@aws-0-xxxxx.pooler.supabase.com:6543/postgres
 SUPABASE_URL=https://你的项目.supabase.co
@@ -118,7 +118,7 @@ docker compose up -d --build
 1. 进入 **1Panel → 网站 → 创建网站 → 反向代理**
 2. 填写：
    - **主域名**：`vision.app`（你的域名）
-   - **代理地址**：`http://127.0.0.1:8080`
+   - **代理地址**：`http://127.0.0.1:9901`
    - **开启 HTTPS**：勾选（自动申请 Let's Encrypt 证书）
 3. 保存
 
@@ -127,7 +127,7 @@ docker compose up -d --build
 1. 创建第二个反向代理网站
 2. 填写：
    - **主域名**：`admin.vision.app`（你的子域名）
-   - **代理地址**：`http://127.0.0.1:8787`
+   - **代理地址**：`http://127.0.0.1:9902`
    - **开启 HTTPS**：勾选
 3. 保存
 

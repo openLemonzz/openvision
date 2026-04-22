@@ -5,7 +5,7 @@ function optionalEnv(name: string) {
 }
 
 export const config = {
-  port: Number(process.env.PORT || 8787),
+  port: Number(process.env.PORT || 9902),
   webOrigin: optionalEnv('WEB_ORIGIN') || 'http://localhost:5173',
   databaseUrl: optionalEnv('DATABASE_URL'),
   supabaseUrl: optionalEnv('SUPABASE_URL'),

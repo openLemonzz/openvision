@@ -6,7 +6,7 @@ services:
     env_file:
       - ./web.env
     ports:
-      - "8080:80"
+      - "9901:9901"
     restart: always
     networks:
       - vision-net
@@ -18,7 +18,7 @@ services:
     env_file:
       - ./admin.env
     ports:
-      - "8787:8787"
+      - "9902:9902"
     restart: always
     networks:
       - vision-net

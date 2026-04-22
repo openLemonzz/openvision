@@ -72,7 +72,7 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 VITE_API_BASE_URL=/api
 
 PORT=8787
-WEB_ORIGIN=http://localhost:8080
+WEB_ORIGIN=http://localhost:9901
 DATABASE_URL=postgresql://postgres:password@db-host:5432/postgres
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
@@ -155,12 +155,12 @@ npm run docker:up
 
 访问：
 
-- `web`: `http://localhost:8080`
+- `web`: `http://localhost:9901`
 - `admin`: `http://localhost:8787`
 
 或：
 
-- `web`: `http://127.0.0.1:8080`
+- `web`: `http://127.0.0.1:9901`
 - `admin`: `http://127.0.0.1:8787`
 
 ## 8. Common Commands
@@ -200,7 +200,7 @@ curl http://127.0.0.1:8787/api/health
 检查 `web`：
 
 ```bash
-curl -I http://127.0.0.1:8080
+curl -I http://127.0.0.1:9901
 ```
 
 期望返回 `200 OK`。

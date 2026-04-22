@@ -20,7 +20,7 @@ COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/web-entrypoint.sh /docker-entrypoint.d/40-write-env.sh
 COPY --from=web-build /workspace/web/dist /usr/share/nginx/html
 RUN chmod +x /docker-entrypoint.d/40-write-env.sh
-EXPOSE 80
+EXPOSE 9901
 
 FROM node:24-alpine AS admin
 
@@ -29,5 +29,5 @@ COPY admin/package.json /app/package.json
 RUN npm install --omit=dev
 COPY --from=admin-build /workspace/admin/dist/client /app/dist/client
 COPY --from=admin-build /workspace/admin/dist/server /app/dist/server
-EXPOSE 8787
+EXPOSE 9902
 CMD ["node", "dist/server/index.js"]
