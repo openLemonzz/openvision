@@ -313,3 +313,198 @@ test('POST /api/generate rejects disabled users before any upstream model call',
 
   assert.equal(fetchCalled, false);
 });
+
+test('DELETE /api/users/:id deletes another user for admins', async () => {
+  const seenQueries: Array<{ sql: string; params: unknown[] | undefined }> = [];
+
+  const dependencies: ServerDependencies = {
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      seenQueries.push({ sql, params });
+
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      if (sql.includes('from auth.users') && sql.includes('where id = $1')) {
+        assert.deepEqual(params, ['user-2']);
+        return {
+          rows: [{ id: 'user-2' }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes(`select to_regclass('public.invites')`)) {
+        return {
+          rows: [{ has_invites: 'public.invites' }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('delete from public.invites')) {
+        assert.deepEqual(params, ['user-2']);
+        return { rows: [], rowCount: 0 };
+      }
+
+      if (sql.includes('delete from auth.users')) {
+        assert.deepEqual(params, ['user-2']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/users/user-2`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: 'Bearer admin-token',
+      },
+    });
+
+    assert.equal(response.status, 204);
+    assert.equal(await response.text(), '');
+  });
+
+  assert.equal(seenQueries.some(({ sql }) => sql.includes('delete from auth.users')), true);
+});
+
+test('DELETE /api/users/:id rejects self-deletion for admins', async () => {
+  let queryCount = 0;
+
+  const dependencies: ServerDependencies = {
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      queryCount += 1;
+
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/users/admin-1`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: 'Bearer admin-token',
+      },
+    });
+
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: 'Forbidden' });
+  });
+
+  assert.equal(queryCount, 1);
+});
+
+test('DELETE /api/users/:id returns 404 when the target user does not exist', async () => {
+  const dependencies: ServerDependencies = {
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      if (sql.includes('from auth.users') && sql.includes('where id = $1')) {
+        assert.deepEqual(params, ['missing-user']);
+        return { rows: [], rowCount: 0 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/users/missing-user`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: 'Bearer admin-token',
+      },
+    });
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: 'User not found' });
+  });
+});
+
+test('GET /api/users marks unconfirmed signups as pending instead of active', async () => {
+  const dependencies: ServerDependencies = {
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      if (sql.includes('from auth.users u') && sql.includes('left join public.profiles')) {
+        assert.match(sql, /confirmed_at/i);
+        return {
+          rows: [
+            {
+              id: 'user-pending',
+              username: 'pending-user',
+              email: 'pending@example.com',
+              status: 'pending',
+              role: 'user',
+              createdAt: '2026-04-23',
+              generationCount: 0,
+              inviteCount: 0,
+            },
+            {
+              id: 'user-active',
+              username: 'active-user',
+              email: 'active@example.com',
+              status: 'active',
+              role: 'user',
+              createdAt: '2026-04-22',
+              generationCount: 2,
+              inviteCount: 1,
+            },
+          ],
+          rowCount: 2,
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/users`, {
+      headers: {
+        Authorization: 'Bearer admin-token',
+      },
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), [
+      {
+        id: 'user-pending',
+        username: 'pending-user',
+        email: 'pending@example.com',
+        status: 'pending',
+        role: 'user',
+        createdAt: '2026-04-23',
+        generationCount: 0,
+        inviteCount: 0,
+      },
+      {
+        id: 'user-active',
+        username: 'active-user',
+        email: 'active@example.com',
+        status: 'active',
+        role: 'user',
+        createdAt: '2026-04-22',
+        generationCount: 2,
+        inviteCount: 1,
+      },
+    ]);
+  });
+});

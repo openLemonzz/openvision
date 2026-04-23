@@ -118,7 +118,7 @@ export function useAdminApp() {
     const current = users.find((user) => user.id === id);
     if (!current) return;
 
-    const nextStatus = current.status === 'active' ? 'banned' : 'active';
+    const nextStatus = current.status === 'banned' ? 'active' : 'banned';
     await apiFetch(`/users/${id}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status: nextStatus }),
@@ -145,6 +145,11 @@ export function useAdminApp() {
     setHistory((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
+  const deleteUser = useCallback(async (id: string) => {
+    await apiFetch(`/users/${id}`, { method: 'DELETE' });
+    setUsers((prev) => prev.filter((user) => user.id !== id));
+  }, []);
+
   return {
     loading,
     me,
@@ -155,6 +160,7 @@ export function useAdminApp() {
     adminLogin,
     adminLogout,
     toggleUserStatus,
+    deleteUser,
     updateModels,
     deleteGeneration,
     refresh,

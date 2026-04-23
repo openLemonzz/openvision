@@ -4,7 +4,7 @@ export interface AdminUser {
   id: string;
   username: string;
   email: string;
-  status: 'active' | 'banned';
+  status: 'active' | 'banned' | 'pending';
   role: 'user' | 'admin';
   createdAt: string;
   generationCount: number;

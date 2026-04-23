@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Search, UserCheck, UserX, Mail, Shield } from 'lucide-react';
+import { Search, UserCheck, UserX, Mail, Shield, Trash2 } from 'lucide-react';
 import type { AdminUser } from '@/lib/types';
 
 export type { AdminUser } from '@/lib/types';
@@ -7,11 +7,16 @@ export type { AdminUser } from '@/lib/types';
 interface AdminUsersProps {
   users: AdminUser[];
   onToggleStatus: (id: string) => void;
+  onDeleteUser: (id: string) => Promise<void>;
+  currentAdminId?: string;
 }
 
-export default function AdminUsers({ users, onToggleStatus }: AdminUsersProps) {
+export default function AdminUsers({ users, onToggleStatus, onDeleteUser, currentAdminId }: AdminUsersProps) {
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'banned'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'banned' | 'pending'>('all');
+  const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const filtered = useMemo(() => {
     return users.filter(u => {
@@ -22,6 +27,20 @@ export default function AdminUsers({ users, onToggleStatus }: AdminUsersProps) {
       return matchesSearch && matchesStatus;
     });
   }, [users, search, statusFilter]);
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    setDeleteError('');
+    try {
+      await onDeleteUser(deleteTarget.id);
+      setDeleteTarget(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   return (
     <div className="p-6 lg:p-8 max-w-[1200px]">
@@ -47,7 +66,7 @@ export default function AdminUsers({ users, onToggleStatus }: AdminUsersProps) {
           />
         </div>
         <div className="flex gap-0">
-          {(['all', 'active', 'banned'] as const).map(s => (
+          {(['all', 'active', 'banned', 'pending'] as const).map(s => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
@@ -57,7 +76,7 @@ export default function AdminUsers({ users, onToggleStatus }: AdminUsersProps) {
                   : 'bg-transparent text-[#888] border-[#333] hover:border-[#555]'
               }`}
             >
-              {s === 'all' ? '全部' : s === 'active' ? '正常' : '已禁用'}
+              {s === 'all' ? '全部' : s === 'active' ? '正常' : s === 'banned' ? '已禁用' : '待确认'}
             </button>
           ))}
         </div>
@@ -66,7 +85,7 @@ export default function AdminUsers({ users, onToggleStatus }: AdminUsersProps) {
       {/* Table */}
       <div className="border border-[#222]">
         {/* Header */}
-        <div className="hidden md:grid md:grid-cols-[1fr_1fr_100px_80px_100px_100px_60px] gap-0 bg-[#111] border-b border-[#222]">
+        <div className="hidden md:grid md:grid-cols-[1fr_1fr_100px_80px_100px_100px_100px] gap-0 bg-[#111] border-b border-[#222]">
           {['用户名', '邮箱', '状态', '角色', '生成数', '邀请数', '操作'].map(h => (
             <div key={h} className="px-4 py-3 text-[9px] text-[#666] uppercase tracking-[0.15em] font-mono-data">
               {h}
@@ -83,7 +102,7 @@ export default function AdminUsers({ users, onToggleStatus }: AdminUsersProps) {
           filtered.map(user => (
             <div
               key={user.id}
-              className="md:grid md:grid-cols-[1fr_1fr_100px_80px_100px_100px_60px] gap-0 border-b border-[#1a1a1a] hover:bg-white/[0.02] transition-colors"
+              className="md:grid md:grid-cols-[1fr_1fr_100px_80px_100px_100px_100px] gap-0 border-b border-[#1a1a1a] hover:bg-white/[0.02] transition-colors"
             >
               <div className="px-4 py-3 flex items-center gap-2">
                 <span className="text-[12px] text-white">{user.username}</span>
@@ -96,10 +115,12 @@ export default function AdminUsers({ users, onToggleStatus }: AdminUsersProps) {
                 <span className={`inline-flex items-center gap-1 text-[10px] font-mono-data px-2 py-0.5 border ${
                   user.status === 'active'
                     ? 'text-emerald-400 border-emerald-400/30'
+                    : user.status === 'pending'
+                    ? 'text-amber-400 border-amber-400/30'
                     : 'text-red-400 border-red-400/30'
                 }`}>
-                  {user.status === 'active' ? <UserCheck size={10} /> : <UserX size={10} />}
-                  {user.status === 'active' ? '正常' : '禁用'}
+                  {user.status === 'active' ? <UserCheck size={10} /> : user.status === 'pending' ? <Mail size={10} /> : <UserX size={10} />}
+                  {user.status === 'active' ? '正常' : user.status === 'pending' ? '待确认' : '禁用'}
                 </span>
               </div>
               <div className="px-4 py-3 flex items-center">
@@ -119,21 +140,75 @@ export default function AdminUsers({ users, onToggleStatus }: AdminUsersProps) {
                 {user.inviteCount}
               </div>
               <div className="px-4 py-3 flex items-center">
-                <button
-                  onClick={() => onToggleStatus(user.id)}
-                  className={`text-[10px] font-mono-data px-2 py-1 border transition-colors ${
-                    user.status === 'active'
-                      ? 'text-red-400 border-red-400/30 hover:bg-red-400/10'
-                      : 'text-emerald-400 border-emerald-400/30 hover:bg-emerald-400/10'
-                  }`}
-                >
-                  {user.status === 'active' ? '禁用' : '启用'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => onToggleStatus(user.id)}
+                    className={`text-[10px] font-mono-data px-2 py-1 border transition-colors ${
+                      user.status === 'banned'
+                        ? 'text-emerald-400 border-emerald-400/30 hover:bg-emerald-400/10'
+                        : 'text-red-400 border-red-400/30 hover:bg-red-400/10'
+                    }`}
+                  >
+                    {user.status === 'banned' ? '启用' : '禁用'}
+                  </button>
+                  {user.id !== currentAdminId && (
+                    <button
+                      onClick={() => {
+                        setDeleteError('');
+                        setDeleteTarget(user);
+                      }}
+                      className="text-red-400 border border-red-400/30 px-2 py-1 hover:bg-red-400/10 transition-colors"
+                      title="删除用户"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           ))
         )}
       </div>
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-[520px] border border-red-400/20 bg-[#0f0f0f] p-6 shadow-2xl">
+            <h3 className="text-[14px] text-white tracking-[0.08em] mb-3">
+              确认删除用户「{deleteTarget.username}」？
+            </h3>
+            <p className="text-[12px] text-[#a8a8a8] leading-relaxed mb-2">
+              该用户有 {deleteTarget.generationCount} 条生成记录、{deleteTarget.inviteCount} 个被邀请人。
+            </p>
+            <p className="text-[12px] text-red-400 leading-relaxed mb-5">
+              该操作会删除用户认证记录，并清理大部分关联数据，不可恢复。
+            </p>
+            {deleteError && (
+              <p className="text-[12px] text-red-400 font-mono-data mb-4 break-words">
+                {deleteError}
+              </p>
+            )}
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  if (isDeleting) return;
+                  setDeleteTarget(null);
+                  setDeleteError('');
+                }}
+                className="text-[11px] font-mono-data px-4 py-2 border border-[#333] text-[#aaa] hover:text-white hover:border-[#555] transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => void handleConfirmDelete()}
+                disabled={isDeleting}
+                className="text-[11px] font-mono-data px-4 py-2 border border-red-400/30 text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-50"
+              >
+                {isDeleting ? '删除中...' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

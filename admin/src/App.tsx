@@ -46,7 +46,14 @@ export default function App() {
         />
         <Route
           path="users"
-          element={<AdminUsers users={admin.users} onToggleStatus={admin.toggleUserStatus} />}
+          element={
+            <AdminUsers
+              users={admin.users}
+              onToggleStatus={admin.toggleUserStatus}
+              onDeleteUser={admin.deleteUser}
+              currentAdminId={admin.me?.id}
+            />
+          }
         />
         <Route
           path="models"

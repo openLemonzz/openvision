@@ -221,7 +221,11 @@ export function createApp({
          u.id::text as id,
          coalesce(p.username, split_part(u.email, '@', 1), 'User') as username,
          u.email,
-         case when coalesce(p.is_disabled, false) then 'banned' else 'active' end as status,
+         case
+           when coalesce(p.is_disabled, false) then 'banned'
+           when u.confirmed_at is null then 'pending'
+           else 'active'
+         end as status,
          case when ar.user_id is not null then 'admin' else 'user' end as role,
          to_char(coalesce(p.created_at, u.created_at), 'YYYY-MM-DD') as "createdAt",
          coalesce(gen.generation_count, 0)::int as "generationCount",
@@ -251,6 +255,43 @@ export function createApp({
     await query!(
       'update public.profiles set is_disabled = $2 where user_id = $1',
       [req.params.id, nextDisabled]
+    );
+
+    res.status(204).end();
+  }));
+
+  app.delete('/api/users/:id', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    if (!ensureServerRuntime(res)) return;
+
+    if (req.params.id === req.authUser?.id) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+
+    const { rows } = await query!(
+      'select id from auth.users where id = $1 limit 1',
+      [req.params.id]
+    );
+
+    if (rows.length === 0) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const invitesTable = await query!(
+      `select to_regclass('public.invites') as has_invites`
+    );
+
+    if (invitesTable.rows[0]?.has_invites) {
+      await query!(
+        'delete from public.invites where inviter_id = $1 or invitee_id = $1',
+        [req.params.id]
+      );
+    }
+
+    await query!(
+      'delete from auth.users where id = $1',
+      [req.params.id]
     );
 
     res.status(204).end();
