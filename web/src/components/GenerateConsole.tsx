@@ -72,12 +72,8 @@ export default function GenerateConsole({ isGenerating, isLoggedIn, models, mode
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
           placeholder="输入你的梦境，或是一个荒诞的指令..."
-          className="w-full bg-transparent text-white text-[15px] leading-relaxed placeholder:text-[#4D4D4D] placeholder:text-[14px] focus:outline-none resize-none min-h-[80px] pr-4"
+          className="w-full min-h-[80px] resize-none bg-transparent text-[15px] leading-relaxed text-white caret-white placeholder:text-[14px] placeholder:text-[#4D4D4D] focus:outline-none"
           rows={3}
-        />
-        <span
-          className="absolute bottom-2 right-0 w-[2px] h-[18px] bg-white"
-          style={{ animation: 'blink 1s step-end infinite' }}
         />
       </div>
 

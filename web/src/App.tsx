@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import Navigation from './components/Navigation';
@@ -14,6 +14,12 @@ import { useAuth } from './hooks/useAuth';
 import { useGeneration } from './hooks/useGeneration';
 import { useInitialization } from './hooks/useInitialization';
 import { usePublicModels } from './hooks/usePublicModels';
+import {
+  HOME_INTRO_OVERLAY_HOLD_MS,
+  getHomeIntroPhase,
+  markHomeIntroSeen,
+  shouldPlayHomeIntro,
+} from './lib/home-intro';
 
 // Re-export for type usage
 export type { GenerationRecord } from './hooks/useGeneration';
@@ -52,7 +58,13 @@ function AuthRequired({ openLogin }: { openLogin: () => void }) {
   return <div className="min-h-screen bg-black" />;
 }
 
-function AppRoutes() {
+function AppRoutes({
+  homeIntroStartedAtMs,
+  playHomeIntroAnimation,
+}: {
+  homeIntroStartedAtMs: number | null;
+  playHomeIntroAnimation: boolean;
+}) {
   const auth = useAuth();
   const navigate = useNavigate();
   const { models, error: modelsError, loading: modelsLoading } = usePublicModels();
@@ -147,6 +159,8 @@ function AppRoutes() {
                 path="/"
                 element={
                   <Home
+                    playHomeIntroAnimation={playHomeIntroAnimation}
+                    homeIntroStartedAtMs={homeIntroStartedAtMs}
                     isGenerating={gen.isGenerating}
                     isLoggedIn={auth.isLoggedIn}
                     history={gen.history}
@@ -182,20 +196,88 @@ function AppRoutes() {
 
 function App() {
   const initialization = useInitialization();
+  const [shouldRunHomeIntro, setShouldRunHomeIntro] = useState(() =>
+    shouldPlayHomeIntro(typeof window === 'undefined' ? null : window.localStorage)
+  );
+  const [homeIntroStartedAtMs, setHomeIntroStartedAtMs] = useState<number | null>(null);
+  const [homeIntroElapsedMs, setHomeIntroElapsedMs] = useState(0);
 
-  if (initialization.status.kind !== 'ready') {
-    return (
-      <InitializationScreen
-        status={initialization.status}
-        runtimeConfig={initialization.runtimeConfig}
-        onRetry={() => {
-          void initialization.refresh();
-        }}
-      />
-    );
-  }
+  useEffect(() => {
+    if (
+      initialization.status.kind !== 'ready' ||
+      !shouldRunHomeIntro ||
+      homeIntroStartedAtMs !== null
+    ) {
+      return;
+    }
 
-  return <AppRoutes />;
+    const startedAtMs = Date.now();
+    markHomeIntroSeen(typeof window === 'undefined' ? null : window.localStorage);
+    setHomeIntroStartedAtMs(startedAtMs);
+    setHomeIntroElapsedMs(0);
+  }, [homeIntroStartedAtMs, initialization.status.kind, shouldRunHomeIntro]);
+
+  useEffect(() => {
+    if (homeIntroStartedAtMs === null) {
+      return;
+    }
+
+    let frameId = 0;
+
+    const tick = () => {
+      const elapsedMs = Date.now() - homeIntroStartedAtMs;
+      setHomeIntroElapsedMs(elapsedMs);
+
+      if (getHomeIntroPhase(elapsedMs) === 'complete') {
+        setShouldRunHomeIntro(false);
+        return;
+      }
+
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [homeIntroStartedAtMs]);
+
+  const homeIntroPhase =
+    homeIntroStartedAtMs === null ? null : getHomeIntroPhase(homeIntroElapsedMs);
+  const shouldMountRoutes =
+    initialization.status.kind === 'ready' &&
+    (!shouldRunHomeIntro ||
+      (homeIntroPhase !== null && homeIntroPhase !== 'holding'));
+  const shouldShowOverlay =
+    initialization.status.kind !== 'ready' ||
+    (shouldRunHomeIntro && homeIntroPhase !== 'complete');
+  const heroIntroStartedAtMs =
+    homeIntroStartedAtMs === null || homeIntroPhase === null || homeIntroPhase === 'holding'
+      ? null
+      : homeIntroStartedAtMs + HOME_INTRO_OVERLAY_HOLD_MS;
+
+  return (
+    <>
+      {shouldMountRoutes ? (
+        <AppRoutes
+          homeIntroStartedAtMs={heroIntroStartedAtMs}
+          playHomeIntroAnimation={shouldRunHomeIntro}
+        />
+      ) : null}
+      {shouldShowOverlay ? (
+        <InitializationScreen
+          status={initialization.status}
+          runtimeConfig={initialization.runtimeConfig}
+          overlay={shouldMountRoutes}
+          exiting={homeIntroPhase === 'exiting'}
+          onRetry={() => {
+            void initialization.refresh();
+          }}
+        />
+      ) : null}
+    </>
+  );
 }
 
 export default App;

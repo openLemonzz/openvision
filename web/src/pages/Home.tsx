@@ -1,11 +1,19 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import AsciiCanvas from '../components/AsciiCanvas';
 import GenerateConsole from '../components/GenerateConsole';
 import HistoryStream from '../components/HistoryStream';
 import type { GenerationRecord } from '../hooks/useGeneration';
 import type { ModelConfig } from './admin/AdminModels';
+import {
+  HOME_HERO_SLOGAN,
+  HOME_HERO_SLOGAN_DELAY_MS,
+  HOME_HERO_SLOGAN_STEP_MS,
+  getTypewriterText,
+} from '../lib/home-intro';
 
 interface HomeProps {
+  homeIntroStartedAtMs: number | null;
+  playHomeIntroAnimation: boolean;
   isGenerating: boolean;
   isLoggedIn: boolean;
   history: GenerationRecord[];
@@ -18,8 +26,27 @@ interface HomeProps {
   onDeleteRecord: (id: string) => void;
 }
 
-export default function Home({ isGenerating, isLoggedIn, history, models, modelsError, modelsLoading, lifecycleTick, onGenerate, onRequireAuth, onDeleteRecord }: HomeProps) {
+const HOME_HERO_SLOGAN_TOTAL_MS =
+  HOME_HERO_SLOGAN_DELAY_MS + HOME_HERO_SLOGAN_STEP_MS * Array.from(HOME_HERO_SLOGAN).length;
+
+export default function Home({
+  homeIntroStartedAtMs,
+  playHomeIntroAnimation,
+  isGenerating,
+  isLoggedIn,
+  history,
+  models,
+  modelsError,
+  modelsLoading,
+  lifecycleTick,
+  onGenerate,
+  onRequireAuth,
+  onDeleteRecord,
+}: HomeProps) {
   const [remixPrompt, setRemixPrompt] = useState<string | undefined>(undefined);
+  const [sloganElapsedMs, setSloganElapsedMs] = useState(() =>
+    homeIntroStartedAtMs === null ? 0 : Math.max(0, Date.now() - homeIntroStartedAtMs)
+  );
 
   const handleGenerate = useCallback(
     (prompt: string, aspectRatio: '1:1' | '16:9' | '3:4' | '9:16', styleStrength: number, engine: string) => {
@@ -27,6 +54,43 @@ export default function Home({ isGenerating, isLoggedIn, history, models, models
     },
     [onGenerate]
   );
+
+  useEffect(() => {
+    if (homeIntroStartedAtMs === null) {
+      setSloganElapsedMs(0);
+      return;
+    }
+
+    const updateElapsedMs = () => {
+      const nextElapsedMs = Math.max(0, Date.now() - homeIntroStartedAtMs);
+      setSloganElapsedMs(nextElapsedMs);
+      return nextElapsedMs;
+    };
+
+    if (updateElapsedMs() >= HOME_HERO_SLOGAN_TOTAL_MS) {
+      return;
+    }
+
+    const timerId = window.setInterval(() => {
+      if (updateElapsedMs() >= HOME_HERO_SLOGAN_TOTAL_MS) {
+        window.clearInterval(timerId);
+      }
+    }, 40);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [homeIntroStartedAtMs]);
+
+  const resolvedSlogan =
+    homeIntroStartedAtMs === null
+      ? HOME_HERO_SLOGAN
+      : getTypewriterText(HOME_HERO_SLOGAN, sloganElapsedMs, {
+          startDelayMs: HOME_HERO_SLOGAN_DELAY_MS,
+          stepMs: HOME_HERO_SLOGAN_STEP_MS,
+        });
+  const showSloganCursor =
+    homeIntroStartedAtMs !== null && resolvedSlogan !== HOME_HERO_SLOGAN;
 
   return (
     <div className="relative min-h-screen bg-black">
@@ -40,8 +104,8 @@ export default function Home({ isGenerating, isLoggedIn, history, models, models
         {/* Hero section with generate console */}
         <section className="min-h-[calc(100vh-80px)] flex flex-col items-center justify-center px-4">
           {/* Title */}
-          <div className="text-center mb-10">
-            <p className="text-[10px] text-[#A8A8A8] uppercase tracking-[0.3em] font-mono-data mb-4">
+          <div className={`text-center mb-10 ${playHomeIntroAnimation ? 'home-hero-enter' : ''}`}>
+            <p className="text-[10px] text-[#B8B8B8] uppercase tracking-[0.34em] font-mono-data mb-4">
               AIGC · Image Generation Platform
             </p>
             <h1
@@ -50,8 +114,13 @@ export default function Home({ isGenerating, isLoggedIn, history, models, models
             >
               VISION
             </h1>
-            <p className="text-[11px] text-[#4D4D4D] uppercase tracking-[0.25em] font-mono-data mt-3">
-              影境 · 从数据洪流中按下快门
+            <p className="mt-4 min-h-[1.6em] text-[13px] text-[#CFCFCF] uppercase tracking-[0.28em] font-mono-data">
+              <span className="inline-block align-top">{resolvedSlogan || ' '}</span>
+              {showSloganCursor ? (
+                <span aria-hidden="true" className="home-slogan-cursor ml-1 inline-block align-top text-white/70">
+                  _
+                </span>
+              ) : null}
             </p>
           </div>
 
