@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, Eye, EyeOff } from 'lucide-react';
+import { shouldCloseAuthModalFromClick } from './auth-modal-backdrop';
 
 interface AuthModalProps {
   visible: boolean;
@@ -64,12 +65,18 @@ export default function AuthModal({ visible, mode, error, confirmation, onClose,
     }
   };
 
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (shouldCloseAuthModalFromClick(e.target, e.currentTarget)) {
+      onClose();
+    }
+  };
+
   return (
-    <div
-      className="fixed inset-0 z-[200] flex items-center justify-center"
-      onClick={onClose}
-    >
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+    <div className="fixed inset-0 z-[200] flex items-center justify-center">
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={handleBackdropClick}
+      />
       <div
         className="liquid-glass-strong relative w-full max-w-[420px] mx-4 p-10"
         onClick={e => e.stopPropagation()}
