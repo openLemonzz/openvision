@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { Zap, AlertCircle } from 'lucide-react';
 import type { AspectRatio } from '../hooks/useGeneration';
 import type { ModelConfig } from '../pages/admin/AdminModels';
@@ -16,16 +16,24 @@ interface GenerateConsoleProps {
   models: ModelConfig[];
   modelsError: string | null;
   modelsLoading: boolean;
+  remixPrompt?: string;
   onGenerate: (prompt: string, aspectRatio: AspectRatio, styleStrength: number, engine: string) => Promise<string>;
   onRequireAuth: () => void;
 }
 
-export default function GenerateConsole({ isGenerating, isLoggedIn, models, modelsError, modelsLoading, onGenerate, onRequireAuth }: GenerateConsoleProps) {
+export default function GenerateConsole({ isGenerating, isLoggedIn, models, modelsError, modelsLoading, remixPrompt, onGenerate, onRequireAuth }: GenerateConsoleProps) {
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
   const [styleStrength, setStyleStrength] = useState(75);
   const [preferredEngine, setPreferredEngine] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (remixPrompt) {
+      setPrompt(remixPrompt);
+      textareaRef.current?.focus();
+    }
+  }, [remixPrompt]);
 
   // Build engine options from enabled models
   const enabledModels = useMemo(() => models.filter(m => m.enabled), [models]);

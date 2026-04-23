@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Eye, EyeOff } from 'lucide-react';
 
 interface AuthModalProps {
   visible: boolean;
@@ -10,14 +10,28 @@ interface AuthModalProps {
   onLogin: (email: string, password: string) => Promise<boolean>;
   onRegister: (username: string, email: string, password: string, inviteCode?: string) => Promise<boolean>;
   onSwitchMode: () => void;
+  onGoToLogin?: () => void;
+  onResetPassword?: (email: string) => Promise<boolean>;
 }
 
-export default function AuthModal({ visible, mode, error, confirmation, onClose, onLogin, onRegister, onSwitchMode }: AuthModalProps) {
+export default function AuthModal({ visible, mode, error, confirmation, onClose, onLogin, onRegister, onSwitchMode, onGoToLogin, onResetPassword }: AuthModalProps) {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [localError, setLocalError] = useState('');
+
+  // P1-3: 切换模式或重新打开弹窗时清空敏感字段，保留 email
+  useEffect(() => {
+    setPassword('');
+    setUsername('');
+    setInviteCode('');
+    setSubmitting(false);
+    setShowPassword(false);
+    setLocalError('');
+  }, [mode, visible]);
 
   if (!visible) return null;
 
@@ -30,6 +44,21 @@ export default function AuthModal({ visible, mode, error, confirmation, onClose,
       } else {
         await onRegister(username, email, password, inviteCode || undefined);
       }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!email.trim()) {
+      setLocalError('请输入邮箱地址');
+      return;
+    }
+    setLocalError('');
+    if (!onResetPassword) return;
+    setSubmitting(true);
+    try {
+      await onResetPassword(email.trim());
     } finally {
       setSubmitting(false);
     }
@@ -94,16 +123,39 @@ export default function AuthModal({ visible, mode, error, confirmation, onClose,
             <label className="block text-[11px] text-[#A8A8A8] uppercase tracking-widest mb-2 font-mono-data">
               Password
             </label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
-              minLength={6}
-              className="w-full bg-transparent border border-[#262626] text-white text-[14px] px-4 py-3 focus:border-white focus:outline-none transition-colors placeholder:text-[#4D4D4D]"
-              placeholder="至少6位字符"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                minLength={6}
+                className="w-full bg-transparent border border-[#262626] text-white text-[14px] px-4 py-3 pr-10 focus:border-white focus:outline-none transition-colors placeholder:text-[#4D4D4D]"
+                placeholder="至少6位字符"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#666] hover:text-white transition-colors"
+                aria-label={showPassword ? '隐藏密码' : '显示密码'}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </div>
+
+          {mode === 'login' && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={handleResetPassword}
+                disabled={submitting}
+                className="text-[11px] text-[#A8A8A8] hover:text-white transition-colors font-mono-data disabled:opacity-40"
+              >
+                忘记密码？
+              </button>
+            </div>
+          )}
 
           {mode === 'register' && (
             <div>
@@ -120,21 +172,31 @@ export default function AuthModal({ visible, mode, error, confirmation, onClose,
             </div>
           )}
 
-          {error && (
-            <p className="text-[12px] text-red-400 font-mono-data">{error}</p>
+          {(error || localError) && (
+            <p className="text-[12px] text-red-400 font-mono-data">{error || localError}</p>
           )}
 
           {confirmation && (
             <p className="text-[12px] text-emerald-400 font-mono-data leading-relaxed">{confirmation}</p>
           )}
 
-          <button
-            type="submit"
-            disabled={submitting || !!confirmation}
-            className="w-full bg-white text-black text-[13px] font-medium uppercase tracking-widest py-3.5 hover:bg-[#E0E0E0] transition-colors mt-2 disabled:opacity-50"
-          >
-            {submitting ? '处理中...' : mode === 'login' ? '登录' : confirmation ? '已发送确认邮件' : '注册'}
-          </button>
+          {confirmation ? (
+            <button
+              type="button"
+              onClick={onGoToLogin}
+              className="w-full bg-white text-black text-[13px] font-medium uppercase tracking-widest py-3.5 hover:bg-[#E0E0E0] transition-colors mt-2"
+            >
+              前往登录
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full bg-white text-black text-[13px] font-medium uppercase tracking-widest py-3.5 hover:bg-[#E0E0E0] transition-colors mt-2 disabled:opacity-50"
+            >
+              {submitting ? '处理中...' : mode === 'login' ? '登录' : '注册'}
+            </button>
+          )}
         </form>
 
         <div className="mt-6 text-center">

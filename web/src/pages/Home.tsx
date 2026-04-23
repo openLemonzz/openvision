@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import AsciiCanvas from '../components/AsciiCanvas';
 import GenerateConsole from '../components/GenerateConsole';
 import HistoryStream from '../components/HistoryStream';
@@ -19,6 +19,8 @@ interface HomeProps {
 }
 
 export default function Home({ isGenerating, isLoggedIn, history, models, modelsError, modelsLoading, lifecycleTick, onGenerate, onRequireAuth, onDeleteRecord }: HomeProps) {
+  const [remixPrompt, setRemixPrompt] = useState<string | undefined>(undefined);
+
   const handleGenerate = useCallback(
     (prompt: string, aspectRatio: '1:1' | '16:9' | '3:4' | '9:16', styleStrength: number, engine: string) => {
       return onGenerate(prompt, aspectRatio, styleStrength, engine);
@@ -60,13 +62,14 @@ export default function Home({ isGenerating, isLoggedIn, history, models, models
             models={models}
             modelsError={modelsError}
             modelsLoading={modelsLoading}
+            remixPrompt={remixPrompt}
             onGenerate={handleGenerate}
             onRequireAuth={onRequireAuth}
           />
         </section>
 
         {/* History Stream */}
-        <HistoryStream records={history.slice(0, 1)} onDelete={onDeleteRecord} lifecycleTick={lifecycleTick} />
+        <HistoryStream records={history.slice(0, 1)} onDelete={onDeleteRecord} onRemix={setRemixPrompt} lifecycleTick={lifecycleTick} />
       </div>
     </div>
   );

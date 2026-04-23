@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { toast } from 'sonner';
 import Navigation from './components/Navigation';
 import AuthModal from './components/AuthModal';
 import Home from './pages/Home';
@@ -34,10 +35,39 @@ function AdminRedirect() {
   );
 }
 
+function AuthRequired({ openLogin }: { openLogin: () => void }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    const returnTo = location.pathname + location.search;
+    if (returnTo !== '/') {
+      sessionStorage.setItem('authReturnTo', returnTo);
+    }
+    toast.info('请先登录');
+    openLogin();
+    navigate('/', { replace: true });
+  }, [location, navigate, openLogin]);
+
+  return <div className="min-h-screen bg-black" />;
+}
+
 function AppRoutes() {
   const auth = useAuth();
+  const navigate = useNavigate();
   const { models, error: modelsError, loading: modelsLoading } = usePublicModels();
   const gen = useGeneration(auth.user?.id, models);
+
+  // P0-2: 登录成功后返回原目标页
+  useEffect(() => {
+    if (auth.isLoggedIn) {
+      const returnTo = sessionStorage.getItem('authReturnTo');
+      if (returnTo) {
+        sessionStorage.removeItem('authReturnTo');
+        navigate(returnTo, { replace: true });
+      }
+    }
+  }, [auth.isLoggedIn, navigate]);
 
   return (
     <Routes>
@@ -49,7 +79,7 @@ function AppRoutes() {
           auth.isLoggedIn ? (
             <ConsoleLayout />
           ) : (
-            <Navigate to="/" replace />
+            <AuthRequired openLogin={auth.openLogin} />
           )
         }
       >
@@ -140,6 +170,8 @@ function AppRoutes() {
               onLogin={auth.login}
               onRegister={auth.register}
               onSwitchMode={() => auth.setAuthMode(auth.authMode === 'login' ? 'register' : 'login')}
+              onGoToLogin={() => auth.setAuthMode('login')}
+              onResetPassword={auth.resetPassword}
             />
           </div>
         }

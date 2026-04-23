@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Maximize2, Trash2, Clock, Ratio, Heart } from 'lucide-react';
 import type { GenerationRecord } from '../../hooks/useGeneration';
 import { calculateLifecycle } from '../../hooks/useGeneration';
@@ -10,9 +10,25 @@ interface ConsoleGenerationsProps {
   lifecycleTick?: number;
 }
 
+const aspectMap: Record<string, string> = {
+  '1:1': '1/1',
+  '16:9': '16/9',
+  '3:4': '3/4',
+  '9:16': '9/16',
+};
+
 export default function ConsoleGenerations({ history, onDelete, onToggleFavorite, lifecycleTick }: ConsoleGenerationsProps) {
   void lifecycleTick;
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxImage(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const formatTime = useCallback((ts: number) => {
     const d = new Date(ts);
@@ -99,24 +115,24 @@ export default function ConsoleGenerations({ history, onDelete, onToggleFavorite
             {/* Image panel */}
             <div className="p-5">
               {record.status === 'pending' ? (
-                <div className="w-full flex items-center justify-center bg-[#0D0D0D] border border-[#262626]" style={{ aspectRatio: '16/9' }}>
+                <div className="w-full flex items-center justify-center bg-[#0D0D0D] border border-[#262626]" style={{ aspectRatio: aspectMap[record.aspectRatio] || '1/1' }}>
                   <div className="text-center">
                     <div className="w-3 h-3 bg-[#444] mx-auto mb-3" style={{ animation: 'pulse-dot 1.5s ease-in-out infinite' }} />
                     <p className="text-[10px] text-[#4D4D4D] uppercase tracking-[0.2em] font-mono-data">Queued...</p>
                   </div>
                 </div>
               ) : record.status === 'generating' ? (
-                <div className="w-full flex items-center justify-center bg-[#0D0D0D] border border-[#262626]" style={{ aspectRatio: '16/9' }}>
+                <div className="w-full flex items-center justify-center bg-[#0D0D0D] border border-[#262626]" style={{ aspectRatio: aspectMap[record.aspectRatio] || '1/1' }}>
                   <div className="text-center">
                     <div className="w-3 h-3 bg-white mx-auto mb-3" style={{ animation: 'pulse-dot 1s ease-in-out infinite' }} />
                     <p className="text-[10px] text-[#4D4D4D] uppercase tracking-[0.2em] font-mono-data">Processing...</p>
                   </div>
                 </div>
               ) : record.status === 'completed' && record.imageUrl ? (
-                <div className="relative overflow-hidden group" style={{ aspectRatio: '16/9' }}>
+                <div className="relative overflow-hidden group" style={{ aspectRatio: aspectMap[record.aspectRatio] || '1/1' }}>
                   <img src={record.imageUrl} alt={record.prompt} className="w-full h-full object-cover block" />
                   <div className="absolute inset-0 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity bg-black/40">
-                    <button className="bg-black/70 text-white p-2 hover:bg-black transition-colors" title="放大">
+                    <button onClick={() => setLightboxImage(record.imageUrl)} className="bg-black/70 text-white p-2 hover:bg-black transition-colors" title="放大" aria-label="放大图片">
                       <Maximize2 size={14} />
                     </button>
                     <button
@@ -129,7 +145,7 @@ export default function ConsoleGenerations({ history, onDelete, onToggleFavorite
                   </div>
                 </div>
               ) : (
-                <div className="w-full flex items-center justify-center bg-[#0D0D0D] border border-[#262626]" style={{ aspectRatio: '16/9' }}>
+                <div className="w-full flex items-center justify-center bg-[#0D0D0D] border border-[#262626]" style={{ aspectRatio: aspectMap[record.aspectRatio] || '1/1' }}>
                   <p className="text-[10px] text-[#4D4D4D] uppercase tracking-[0.2em] font-mono-data">Failed</p>
                 </div>
               )}
@@ -137,13 +153,20 @@ export default function ConsoleGenerations({ history, onDelete, onToggleFavorite
           </div>
         ))}
       </div>
+
+      {/* Lightbox */}
+      {lightboxImage && (
+        <div className="fixed inset-0 z-[300] bg-black/95 flex items-center justify-center p-8" onClick={() => setLightboxImage(null)}>
+          <img src={lightboxImage} alt="" className="max-w-full max-h-full object-contain" onClick={e => e.stopPropagation()} />
+          <button onClick={() => setLightboxImage(null)} className="absolute top-6 right-6 text-[#A8A8A8] hover:text-white text-[12px] uppercase tracking-[0.2em] font-mono-data" aria-label="关闭">Close</button>
+        </div>
+      )}
     </div>
   );
 }
 
 function GenerationLifecycleBar({ record }: { record: GenerationRecord }) {
   const info = calculateLifecycle(record);
-  console.log(`[UI-ConsoleGen] render lifecycleBar record=${record.id.slice(0, 8)} status=${record.status} lifecycle=${info.lifecycle} progress=${info.progress.toFixed(1)}% text=${info.remainingText}`);
   if (!info.lifecycle) return null;
 
   const colorClass =

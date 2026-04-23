@@ -6,6 +6,7 @@ import { calculateLifecycle } from '../hooks/useGeneration';
 interface HistoryStreamProps {
   records: GenerationRecord[];
   onDelete?: (id: string) => void;
+  onRemix?: (prompt: string) => void;
   lifecycleTick?: number;
 }
 
@@ -16,7 +17,7 @@ const aspectMap: Record<string, string> = {
   '9:16': '9/16',
 };
 
-function CinematicRevealImage({ src, alt, aspectRatio }: { src: string; alt: string; aspectRatio: string }) {
+function CinematicRevealImage({ src, alt, aspectRatio, onZoom, onRemix }: { src: string; alt: string; aspectRatio: string; onZoom?: () => void; onRemix?: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -71,10 +72,10 @@ function CinematicRevealImage({ src, alt, aspectRatio }: { src: string; alt: str
       />
       {/* Action buttons on hover */}
       <div className="absolute inset-0 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button className="bg-black/70 text-white p-2 hover:bg-black transition-colors" title="放大">
+        <button onClick={onZoom} className="bg-black/70 text-white p-2 hover:bg-black transition-colors" title="放大" aria-label="放大图片">
           <Maximize2 size={14} />
         </button>
-        <button className="bg-black/70 text-white p-2 hover:bg-black transition-colors" title="重混">
+        <button onClick={onRemix} className="bg-black/70 text-white p-2 hover:bg-black transition-colors" title="重混" aria-label="重混此提示词">
           <Shuffle size={14} />
         </button>
       </div>
@@ -84,9 +85,18 @@ function CinematicRevealImage({ src, alt, aspectRatio }: { src: string; alt: str
   );
 }
 
-export default function HistoryStream({ records, onDelete, lifecycleTick }: HistoryStreamProps) {
+export default function HistoryStream({ records, onDelete, onRemix, lifecycleTick }: HistoryStreamProps) {
   void lifecycleTick;
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxImage(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const formatTime = useCallback((ts: number) => {
     const d = new Date(ts);
@@ -198,6 +208,8 @@ export default function HistoryStream({ records, onDelete, lifecycleTick }: Hist
                   src={record.imageUrl}
                   alt={record.prompt}
                   aspectRatio={record.aspectRatio}
+                  onZoom={() => setLightboxImage(record.imageUrl)}
+                  onRemix={() => onRemix?.(record.prompt)}
                 />
               ) : (
                 <div
@@ -211,13 +223,20 @@ export default function HistoryStream({ records, onDelete, lifecycleTick }: Hist
           </div>
         ))}
       </div>
+
+      {/* Lightbox */}
+      {lightboxImage && (
+        <div className="fixed inset-0 z-[300] bg-black/95 flex items-center justify-center p-8" onClick={() => setLightboxImage(null)}>
+          <img src={lightboxImage} alt="" className="max-w-full max-h-full object-contain" onClick={e => e.stopPropagation()} />
+          <button onClick={() => setLightboxImage(null)} className="absolute top-6 right-6 text-[#A8A8A8] hover:text-white text-[12px] uppercase tracking-[0.2em] font-mono-data" aria-label="关闭">Close</button>
+        </div>
+      )}
     </div>
   );
 }
 
 function LifecycleBar({ record }: { record: GenerationRecord }) {
   const info = calculateLifecycle(record);
-  console.log(`[UI-HistoryStream] render lifecycleBar record=${record.id.slice(0, 8)} status=${record.status} lifecycle=${info.lifecycle} progress=${info.progress.toFixed(1)}% text=${info.remainingText}`);
   if (!info.lifecycle) return null;
 
   const colorClass =

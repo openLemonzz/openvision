@@ -55,7 +55,7 @@ export function useAuth() {
 
   const [loading, setLoading] = useState(() => supabaseEnabled);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthModeState] = useState<'login' | 'register'>('login');
   const [error, setError] = useState('');
   const [confirmationMessage, setConfirmationMessage] = useState('');
 
@@ -116,22 +116,44 @@ export function useAuth() {
     return () => subscription.unsubscribe();
   }, [loadProfile]);
 
+  const setAuthMode = useCallback((mode: 'login' | 'register') => {
+    setAuthModeState(mode);
+    setError('');
+    setConfirmationMessage('');
+  }, []);
+
   const openLogin = useCallback(() => {
-    setAuthMode('login');
+    setAuthModeState('login');
     setShowAuthModal(true);
     setError('');
+    setConfirmationMessage('');
   }, []);
 
   const openRegister = useCallback(() => {
-    setAuthMode('register');
+    setAuthModeState('register');
     setShowAuthModal(true);
     setError('');
+    setConfirmationMessage('');
   }, []);
 
   const closeAuth = useCallback(() => {
     setShowAuthModal(false);
     setError('');
     setConfirmationMessage('');
+    sessionStorage.removeItem('authReturnTo');
+  }, []);
+
+  // ======== Reset Password ========
+  const resetPassword = useCallback(async (email: string) => {
+    const { error: resetError } = await (supabase.auth as unknown as { resetPasswordForEmail: (email: string, options?: { redirectTo?: string }) => Promise<{ error: { message: string } | null }> }).resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/`,
+    });
+    if (resetError) {
+      setError(resetError.message);
+      return false;
+    }
+    setConfirmationMessage('密码重置邮件已发送，请前往邮箱查收');
+    return true;
   }, []);
 
   // ======== Login ========
@@ -195,6 +217,7 @@ export function useAuth() {
     closeAuth,
     login,
     register,
+    resetPassword,
     logout,
   };
 }

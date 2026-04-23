@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Grid3X3, List, Trash2, Maximize2, Heart } from 'lucide-react';
 import type { GenerationRecord } from '../hooks/useGeneration';
 
@@ -15,6 +15,14 @@ export default function Gallery({ history, onDelete, onToggleFavorite }: Gallery
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [filter, setFilter] = useState('全部');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSelectedImage(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const filtered = filter === '全部'
     ? history
@@ -85,7 +93,7 @@ export default function Gallery({ history, onDelete, onToggleFavorite }: Gallery
               <img
                 src={record.imageUrl}
                 alt={record.prompt}
-                className="w-full aspect-square object-cover block"
+                className="w-full aspect-square object-contain bg-[#0D0D0D] block"
               />
               <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-4">
                 <div className="flex justify-end gap-2">
@@ -128,7 +136,7 @@ export default function Gallery({ history, onDelete, onToggleFavorite }: Gallery
               <img
                 src={record.imageUrl}
                 alt={record.prompt}
-                className="w-full aspect-square object-cover block border border-[#222]"
+                className="w-full aspect-square object-contain bg-[#0D0D0D] block border border-[#222]"
               />
               <div>
                 <p className="text-[12px] text-white leading-relaxed">{record.prompt}</p>
