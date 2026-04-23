@@ -1,8 +1,6 @@
 services:
   web:
-    build:
-      context: .
-      target: web
+    image: ${VISION_WEB_IMAGE}
     env_file:
       - ./web.env
     ports:
@@ -12,9 +10,7 @@ services:
       - vision-net
 
   admin:
-    build:
-      context: .
-      target: admin
+    image: ${VISION_ADMIN_IMAGE}
     env_file:
       - ./admin.env
     ports:

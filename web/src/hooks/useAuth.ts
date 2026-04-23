@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, supabaseEnabled } from '@/lib/supabase';
 import { adminFetch } from '@/lib/admin-api';
-import { resolveRegisterResult, type RegisterSignUpResult } from '@/lib/auth-registration';
+import {
+  buildRegisterSignUpOptions,
+  resolveRegisterResult,
+  type RegisterSignUpResult,
+} from '@/lib/auth-registration';
 
 type SupabaseUser = {
   id: string;
@@ -45,7 +49,10 @@ export function useAuth() {
     signUp: (args: {
       email: string;
       password: string;
-      options: { data: Record<string, unknown> };
+      options: {
+        data: Record<string, unknown>;
+        emailRedirectTo?: string;
+      };
     }) => Promise<RegisterSignUpResult>;
     signOut: () => Promise<{ error?: { message: string } | null }>;
   };
@@ -170,9 +177,15 @@ export function useAuth() {
 
   // ======== Register ========
   const register = useCallback(async (username: string, email: string, password: string, inviteCode?: string) => {
+    const registerOptions = buildRegisterSignUpOptions({
+      username,
+      inviteCode,
+      origin: window.location.origin,
+    });
+
     const registerResult = await authClient.signUp({
       email, password,
-      options: { data: { username, invite_code: inviteCode || null } },
+      options: registerOptions,
     });
 
     const resolvedResult = resolveRegisterResult(registerResult);

@@ -16,6 +16,24 @@ export interface RegisterResolution {
   confirmationMessage?: string;
 }
 
+export function buildRegisterSignUpOptions(args: {
+  username: string;
+  inviteCode?: string;
+  origin: string;
+}) {
+  const normalizedOrigin = args.origin.endsWith('/')
+    ? args.origin.slice(0, -1)
+    : args.origin;
+
+  return {
+    data: {
+      username: args.username,
+      invite_code: args.inviteCode || null,
+    },
+    emailRedirectTo: `${normalizedOrigin}/`,
+  };
+}
+
 export function resolveRegisterErrorMessage(message: string) {
   const normalizedMessage = message.toLowerCase();
 

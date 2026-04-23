@@ -7,6 +7,12 @@
 | web | 前端静态页面（Nginx） | 80 | 9901 |
 | admin | 后端 API + 管理后台（Node.js） | 9902 | 9902 |
 
+当前推荐生产模式：
+
+- GitHub Actions 负责构建镜像
+- Docker Hub 负责存储镜像
+- 1Panel 服务器只负责 `pull` 和运行镜像
+
 外部访问通过 **1Panel OpenResty** 反向代理到上述端口，不直接暴露端口到公网。
 
 ---
@@ -18,6 +24,37 @@
    - `vision.app` → Web 前端
    - `admin.vision.app` → Admin 后端）
 3. **Supabase 项目**（数据库 + 认证服务，本项目不自带数据库）
+4. **Docker Hub 仓库**：
+   - `vision-web`
+   - `vision-admin`
+5. **GitHub 仓库 Secrets**：
+   - `DOCKERHUB_USERNAME`
+   - `DOCKERHUB_TOKEN`
+
+## 发布流程
+
+### GitHub 到 Docker Hub
+
+仓库新增的 GitHub Actions 工作流会在以下时机自动发布镜像：
+
+- `push` 到 `main`
+  - `vision-web:latest`
+  - `vision-web:sha-<7位提交号>`
+  - `vision-admin:latest`
+  - `vision-admin:sha-<7位提交号>`
+- `push` tag，例如 `v1.2.3`
+  - `vision-web:v1.2.3`
+  - `vision-admin:v1.2.3`
+
+发布前会先执行：
+
+```bash
+npm ci
+npm run build:web
+npm run build:admin
+```
+
+只有这些构建检查通过，镜像才会被推送到 Docker Hub。
 
 ---
 
@@ -32,44 +69,43 @@
    - **路径**：`/opt/1panel/docker/compose/vision`
 4. 点击创建文件夹，然后进入该目录
 
-### 第二步：上传代码
+### 第二步：上传部署文件
 
-将项目代码上传到服务器编排目录：
+生产服务器不再需要整个项目源码，只需要部署文件：
 
 ```bash
-# 在本地打包项目（排除 node_modules / .git / dist）
 cd /你的项目路径/vision
-tar czvf vision-deploy.tar.gz \
-  --exclude='node_modules' \
-  --exclude='.git' \
-  --exclude='dist' \
-  --exclude='web/dist' \
-  --exclude='admin/dist' \
-  .
-
-# 上传到服务器
-scp vision-deploy.tar.gz root@你的服务器IP:/opt/1panel/docker/compose/vision/
-
-# 在服务器上解压
-ssh root@你的服务器IP
-cd /opt/1panel/docker/compose/vision
-tar xzvf vision-deploy.tar.gz
-
-# 把 1Panel 部署文件移到编排根目录
-cp deploy/1panel/docker-compose.yml ./docker-compose.yml
+scp deploy/1panel/docker-compose.yml \
+  deploy/1panel/.env.example \
+  deploy/1panel/web.env \
+  deploy/1panel/admin.env \
+  root@你的服务器IP:/opt/1panel/docker/compose/vision/
 ```
 
 ### 第三步：配置环境变量
 
-复制模板并填写真实值：
+登录服务器，复制模板并填写真实值：
 
 ```bash
 cd /opt/1panel/docker/compose/vision
-cp deploy/1panel/web.env ./web.env
-cp deploy/1panel/admin.env ./admin.env
+cp .env.example .env
 
 # 生成强随机加密密钥
 openssl rand -hex 32
+```
+
+编辑 `.env`：
+
+```env
+VISION_WEB_IMAGE=docker.io/你的DockerHub用户名/vision-web:latest
+VISION_ADMIN_IMAGE=docker.io/你的DockerHub用户名/vision-admin:latest
+```
+
+如果要回滚，可以直接把 tag 改成之前发布过的版本，例如：
+
+```env
+VISION_WEB_IMAGE=docker.io/你的DockerHub用户名/vision-web:sha-abc1234
+VISION_ADMIN_IMAGE=docker.io/你的DockerHub用户名/vision-admin:v1.2.3
 ```
 
 编辑 `web.env`：
@@ -98,18 +134,21 @@ CONFIG_CRYPT_KEY=用openssl生成的64位十六进制字符串
 
 ### 第四步：启动编排
 
-在 1Panel 编排页面：
+第一次部署前，先确认 Docker Hub 里已经有镜像。
 
-1. 确认 `docker-compose.yml` 内容正确
-2. 点击 **启动**
-3. 等待构建完成（首次构建约 2-3 分钟）
-
-或者在服务器命令行执行：
+在服务器命令行执行：
 
 ```bash
 cd /opt/1panel/docker/compose/vision
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
+
+或者在 1Panel 编排页面：
+
+1. 确认 `docker-compose.yml` 内容正确
+2. 先执行拉取镜像
+3. 再启动编排
 
 ### 第五步：配置 OpenResty 反向代理
 
@@ -153,14 +192,52 @@ docker compose ps
 docker compose logs -f web
 docker compose logs -f admin
 
-# 重启服务
-docker compose restart
+# 拉取最新镜像并更新服务
+docker compose pull
+docker compose up -d
 
-# 重建（代码更新后）
-docker compose up -d --build
+# 仅重启容器
+docker compose restart
 
 # 停止
 docker compose down
+```
+
+## 更新与回滚
+
+### 更新到最新 `main`
+
+1. 本地提交并推送到 GitHub `main`
+2. 等待 GitHub Actions 推送新镜像到 Docker Hub
+3. 服务器执行：
+
+```bash
+cd /opt/1panel/docker/compose/vision
+docker compose pull
+docker compose up -d
+```
+
+### 发布正式版本
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+镜像发布成功后，把 `.env` 中的 tag 改为 `v1.2.3`，再执行：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### 回滚
+
+把 `.env` 中的 `VISION_WEB_IMAGE` 和 `VISION_ADMIN_IMAGE` 改成之前的 `sha-*` 或 `v*` tag，然后执行：
+
+```bash
+docker compose pull
+docker compose up -d
 ```
 
 ---
@@ -172,3 +249,4 @@ docker compose down
 3. **数据库**：本项目依赖 Supabase PostgreSQL，不需要在服务器本地安装数据库
 4. **文件存储**：图片生成后存储在服务端本地，生产环境建议配置持久化卷或迁移到对象存储
 5. **CORS**：`WEB_ORIGIN` 必须填写前端的真实线上域名，否则 API 请求会被拦截
+6. **镜像命名**：服务器实际运行的版本取决于 `.env` 中的 `VISION_WEB_IMAGE` 和 `VISION_ADMIN_IMAGE`，而不是服务器目录里是否存在源码
