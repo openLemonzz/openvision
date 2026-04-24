@@ -60,6 +60,30 @@ function resolveRelativeUrl(baseUrl: string, maybeRelative: string) {
   return `${base}${maybeRelative.startsWith('/') ? '' : '/'}${maybeRelative}`;
 }
 
+function normalizePublicWebUrl(value: unknown) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(trimmedValue);
+  } catch {
+    throw new Error('publicWebUrl must be an absolute http/https URL');
+  }
+
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    throw new Error('publicWebUrl must be an absolute http/https URL');
+  }
+
+  return parsedUrl.origin;
+}
+
 export function createApp({
   query = pool ? async (sql, params) => pool.query(sql, params) : undefined,
   fetch: fetchImpl = fetch,
@@ -109,6 +133,39 @@ export function createApp({
         where id = $1
         limit 1`,
       [modelId]
+    );
+
+    return rows[0] ?? null;
+  }
+
+  async function loadAppSettings() {
+    if (!query) {
+      return null;
+    }
+
+    const { rows } = await query(
+      `select public_web_url
+         from public.app_settings
+        where id = 'default'
+        limit 1`
+    );
+
+    return rows[0] ?? null;
+  }
+
+  async function saveAppSettings(publicWebUrl: string | null) {
+    if (!query) {
+      return null;
+    }
+
+    const { rows } = await query(
+      `insert into public.app_settings (id, public_web_url)
+       values ($1, $2)
+       on conflict (id) do update
+         set public_web_url = excluded.public_web_url,
+             updated_at = now()
+       returning public_web_url`,
+      ['default', publicWebUrl]
     );
 
     return rows[0] ?? null;
@@ -388,6 +445,44 @@ export function createApp({
       defaultSize: row.default_size,
       protocol: row.protocol,
     })));
+  }));
+
+  app.get('/api/settings/public', asyncHandler(async (_req, res) => {
+    if (!ensureServerRuntime(res)) return;
+    const settings = await loadAppSettings();
+
+    res.json({
+      publicWebUrl: (settings?.public_web_url as string | null) ?? null,
+    });
+  }));
+
+  app.get('/api/settings', requireAdmin, asyncHandler(async (_req, res) => {
+    if (!ensureServerRuntime(res)) return;
+    const settings = await loadAppSettings();
+
+    res.json({
+      publicWebUrl: (settings?.public_web_url as string | null) ?? null,
+    });
+  }));
+
+  app.put('/api/settings', requireAdmin, asyncHandler(async (req, res) => {
+    if (!ensureServerRuntime(res)) return;
+
+    try {
+      const normalizedPublicWebUrl = normalizePublicWebUrl(req.body.publicWebUrl);
+      const settings = await saveAppSettings(normalizedPublicWebUrl);
+
+      res.json({
+        publicWebUrl: (settings?.public_web_url as string | null) ?? null,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'publicWebUrl must be an absolute http/https URL') {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+
+      throw error;
+    }
   }));
 
   app.get('/api/my/generations', requireUser, asyncHandler(async (req: AuthenticatedRequest, res) => {

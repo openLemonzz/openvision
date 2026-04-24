@@ -9,7 +9,7 @@ async function withTestServer(
   run: (baseUrl: string) => Promise<void>
 ) {
   const app = createApp(dependencies);
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
 
   try {
     await new Promise<void>((resolve) => {
@@ -177,6 +177,105 @@ test('GET /api/public/models returns enabled web-facing model metadata without s
       defaultSize: '1024x1024',
       protocol: 'openai',
     }]);
+  });
+});
+
+test('GET /api/settings/public returns only the public web url', async () => {
+  const dependencies: ServerDependencies = {
+    query: async (sql) => {
+      if (sql.includes('from public.app_settings')) {
+        return {
+          rows: [{
+            public_web_url: 'https://vision.app',
+          }],
+          rowCount: 1,
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/settings/public`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      publicWebUrl: 'https://vision.app',
+    });
+  });
+});
+
+test('PUT /api/settings normalizes and persists the public web url origin', async () => {
+  const dependencies: ServerDependencies = {
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      if (sql.includes('insert into public.app_settings')) {
+        assert.deepEqual(params, ['default', 'https://vision.app']);
+        return {
+          rows: [{
+            public_web_url: 'https://vision.app',
+          }],
+          rowCount: 1,
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer admin-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        publicWebUrl: 'https://vision.app/welcome?from=email',
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      publicWebUrl: 'https://vision.app',
+    });
+  });
+});
+
+test('PUT /api/settings rejects invalid public web urls', async () => {
+  const dependencies: ServerDependencies = {
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer admin-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        publicWebUrl: 'not-a-url',
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: 'publicWebUrl must be an absolute http/https URL',
+    });
   });
 });
 

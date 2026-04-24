@@ -132,6 +132,9 @@ SUPABASE_SERVICE_ROLE_KEY=你的service-role-key
 CONFIG_CRYPT_KEY=用openssl生成的64位十六进制字符串
 ```
 
+这里的 `WEB_ORIGIN` 只用于 admin API 的 CORS。
+邮件确认和密码重置的跳转地址需要在部署完成后进入后台“站点配置”单独设置。
+
 ### 第四步：启动编排
 
 第一次部署前，先确认 Docker Hub 里已经有镜像。
@@ -177,6 +180,8 @@ docker compose up -d
    - **Site URL**：`https://vision.app`
    - **Redirect URLs**：添加 `https://vision.app` 和 `https://admin.vision.app`
 3. 进入 Database → 执行 `supabase/schema.sql` 初始化表结构（如未执行过）
+4. 使用管理员账号登录 `admin`，进入“站点配置”
+5. 把“前台公开地址”设置为用户实际访问的 web 域名，例如 `https://vision.app`
 
 ---
 
@@ -248,5 +253,6 @@ docker compose up -d
 2. **`SUPABASE_SERVICE_ROLE_KEY`** 拥有管理员权限，绝不要泄露到前端或 Git
 3. **数据库**：本项目依赖 Supabase PostgreSQL，不需要在服务器本地安装数据库
 4. **文件存储**：图片生成后存储在服务端本地，生产环境建议配置持久化卷或迁移到对象存储
-5. **CORS**：`WEB_ORIGIN` 必须填写前端的真实线上域名，否则 API 请求会被拦截
-6. **镜像命名**：服务器实际运行的版本取决于 `.env` 中的 `VISION_WEB_IMAGE` 和 `VISION_ADMIN_IMAGE`，而不是服务器目录里是否存在源码
+5. **CORS**：`WEB_ORIGIN` 必须填写前端的真实线上域名，否则 API 请求会被拦截；但它不再决定邮件跳转地址
+6. **认证跳转**：后台“站点配置”的“前台公开地址”必须和 Supabase Authentication → Redirect URLs 中允许的 origin 保持一致
+7. **镜像命名**：服务器实际运行的版本取决于 `.env` 中的 `VISION_WEB_IMAGE` 和 `VISION_ADMIN_IMAGE`，而不是服务器目录里是否存在源码

@@ -82,9 +82,10 @@ CONFIG_CRYPT_KEY=replace-with-random-secret
 
 关键约束：
 
-- `WEB_ORIGIN` 必须和用户实际访问 `web` 的地址一致
+- `WEB_ORIGIN` 用于 admin API 的 CORS，必须和用户实际访问 `web` 的地址一致
 - `VITE_ADMIN_API_URL` 必须指向实际 `admin` API 地址
 - `VITE_ADMIN_APP_URL` 必须指向实际 `admin` UI 地址
+- 注册确认邮件和密码重置邮件的跳转地址改由后台“站点配置”页面维护，不再走 `web` 容器环境变量
 
 本地请统一使用其中一套：
 
@@ -144,6 +145,9 @@ from auth.users u
 left join public.admin_roles ar on ar.user_id = u.id
 where u.email = 'your-admin@example.com';
 ```
+
+授予管理员后，登录 `admin`，进入“站点配置”设置“前台公开地址”。
+这个值会用于 Supabase 注册确认邮件和密码重置邮件的跳转地址。
 
 ## 7. Start Services
 
@@ -269,6 +273,15 @@ left join public.admin_roles ar on ar.user_id = u.id
 where u.email = 'your-admin@example.com';
 ```
 
+### 注册确认邮件跳到了错误地址
+
+优先检查两处是否一致：
+
+- `admin` 后台“站点配置”里的“前台公开地址”
+- Supabase Dashboard → Authentication → URL Configuration → Redirect URLs
+
+如果 Redirect URLs 没有包含同一个 origin，Supabase 可能回退到它后台默认的 Site URL。
+
 ### `/api/generate` 返回 `{"error":"Upstream failed: 401"}`
 
 说明模型上游返回了 401。
@@ -285,9 +298,11 @@ where u.email = 'your-admin@example.com';
 生产环境建议：
 
 - `web` 和 `admin` 使用独立域名或子域名
-- `WEB_ORIGIN` 配置成真实 `web` 地址
+- `WEB_ORIGIN` 配置成真实 `web` 地址，用于 CORS
 - `VITE_ADMIN_API_URL` 配置成真实 `admin` API 地址
 - `VITE_ADMIN_APP_URL` 配置成真实 `admin` UI 地址
+- 在后台“站点配置”中把“前台公开地址”设置为真实 `web` 域名
+- Supabase Authentication 的 Redirect URLs 必须包含同一个 `web` origin
 - `SUPABASE_SERVICE_ROLE_KEY` 和 `CONFIG_CRYPT_KEY` 只放到 `admin` 服务端环境
 
 以后如果结构变更，直接更新：

@@ -4,6 +4,7 @@ import AdminGenerations from '@/pages/admin/AdminGenerations';
 import AdminLayout from '@/pages/admin/AdminLayout';
 import AdminLogin from '@/pages/admin/AdminLogin';
 import AdminModels from '@/pages/admin/AdminModels';
+import AdminSettings from '@/pages/admin/AdminSettings';
 import AdminUsers from '@/pages/admin/AdminUsers';
 import { useAdminApp } from '@/hooks/useAdminApp';
 
@@ -58,6 +59,10 @@ export default function App() {
         <Route
           path="models"
           element={<AdminModels models={admin.models} onUpdateModels={admin.updateModels} />}
+        />
+        <Route
+          path="settings"
+          element={<AdminSettings settings={admin.settings} onUpdateSettings={admin.updateSettings} />}
         />
         <Route
           path="generations"

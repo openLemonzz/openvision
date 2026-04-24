@@ -73,12 +73,20 @@ create table if not exists public.model_configs (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.app_settings (
+  id text primary key default 'default' check (id = 'default'),
+  public_web_url text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 drop table if exists public.invites cascade;
 
 alter table public.generations disable row level security;
 alter table public.profiles disable row level security;
 alter table public.referrals disable row level security;
 alter table public.model_configs disable row level security;
+alter table public.app_settings disable row level security;
 
 create index if not exists idx_generations_user_id on public.generations(user_id);
 create index if not exists idx_generations_created_at on public.generations(created_at desc);
@@ -171,4 +179,8 @@ insert into public.model_configs (
   protocol
 ) values
   ('gpt-image-2', 'GPT-Image-2', 'OpenAI Compatible', 'https://api.example.com/v1/images/generations', true, 1000, 0.7, '1024x1024', 'openai')
+on conflict (id) do nothing;
+
+insert into public.app_settings (id, public_web_url)
+values ('default', null)
 on conflict (id) do nothing;

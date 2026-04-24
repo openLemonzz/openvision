@@ -46,3 +46,7 @@ export interface AdminMe {
   email: string;
   isAdmin: boolean;
 }
+
+export interface AppSettings {
+  publicWebUrl: string | null;
+}

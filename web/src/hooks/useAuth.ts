@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase, supabaseEnabled } from '@/lib/supabase';
-import { adminFetch } from '@/lib/admin-api';
+import { adminApiUrl, supabase, supabaseEnabled } from '@/lib/supabase';
+import { adminFetch, buildAdminApiUrl } from '@/lib/admin-api';
 import {
   buildRegisterSignUpOptions,
+  resolveAuthEmailRedirectUrl,
   resolveRegisterResult,
   type RegisterSignUpResult,
 } from '@/lib/auth-registration';
@@ -150,10 +151,20 @@ export function useAuth() {
     sessionStorage.removeItem('authReturnTo');
   }, []);
 
+  const resolveAuthRedirectUrl = useCallback(async () => (
+    resolveAuthEmailRedirectUrl({
+      currentOrigin: window.location.origin,
+      settingsApiUrl: adminApiUrl
+        ? buildAdminApiUrl('/settings/public', adminApiUrl)
+        : undefined,
+    })
+  ), []);
+
   // ======== Reset Password ========
   const resetPassword = useCallback(async (email: string) => {
+    const redirectTo = await resolveAuthRedirectUrl();
     const { error: resetError } = await (supabase.auth as unknown as { resetPasswordForEmail: (email: string, options?: { redirectTo?: string }) => Promise<{ error: { message: string } | null }> }).resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/`,
+      redirectTo,
     });
     if (resetError) {
       setError(resetError.message);
@@ -161,7 +172,7 @@ export function useAuth() {
     }
     setConfirmationMessage('密码重置邮件已发送，请前往邮箱查收');
     return true;
-  }, []);
+  }, [resolveAuthRedirectUrl]);
 
   // ======== Login ========
   const login = useCallback(async (email: string, password: string) => {
@@ -177,10 +188,11 @@ export function useAuth() {
 
   // ======== Register ========
   const register = useCallback(async (username: string, email: string, password: string, inviteCode?: string) => {
+    const redirectOrigin = await resolveAuthRedirectUrl();
     const registerOptions = buildRegisterSignUpOptions({
       username,
       inviteCode,
-      origin: window.location.origin,
+      origin: redirectOrigin,
     });
 
     const registerResult = await authClient.signUp({
@@ -206,7 +218,7 @@ export function useAuth() {
     setError('');
     setConfirmationMessage('');
     return true;
-  }, []);
+  }, [resolveAuthRedirectUrl]);
 
   // ======== Logout ========
   const logout = useCallback(async () => {

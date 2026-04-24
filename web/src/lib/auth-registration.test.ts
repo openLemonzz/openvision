@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  resolveAuthEmailRedirectUrl,
+  resolveAuthRedirectOrigin,
   buildRegisterSignUpOptions,
   resolveRegisterResult,
 } from './auth-registration.ts';
@@ -65,4 +67,74 @@ test('register signup options use the current site origin for email confirmation
     },
     emailRedirectTo: 'https://vision.example.com/',
   });
+});
+
+test('configured public web origin overrides browser origin for email confirmation', () => {
+  const redirectOrigin = resolveAuthRedirectOrigin({
+    configuredOrigin: 'https://vision.example.com/welcome?from=email',
+    currentOrigin: 'http://localhost:3000',
+  });
+
+  const options = buildRegisterSignUpOptions({
+    username: 'demo',
+    inviteCode: 'ABCD-1234',
+    origin: redirectOrigin,
+  });
+
+  assert.equal(redirectOrigin, 'https://vision.example.com');
+  assert.equal(options.emailRedirectTo, 'https://vision.example.com/');
+});
+
+test('invalid configured public web origin falls back to the current browser origin', () => {
+  const redirectOrigin = resolveAuthRedirectOrigin({
+    configuredOrigin: 'not-a-url',
+    currentOrigin: 'https://app.example.com',
+  });
+
+  assert.equal(redirectOrigin, 'https://app.example.com');
+});
+
+test('settings api response overrides browser origin for auth redirects', async () => {
+  const redirectUrl = await resolveAuthEmailRedirectUrl({
+    currentOrigin: 'http://localhost:3000',
+    settingsApiUrl: 'https://admin.example.com/api/settings/public',
+    fetchImpl: async (input) => {
+      assert.equal(String(input), 'https://admin.example.com/api/settings/public');
+      return new Response(JSON.stringify({ publicWebUrl: 'https://vision.example.com/path?ignored=1' }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    },
+  });
+
+  assert.equal(redirectUrl, 'https://vision.example.com/');
+});
+
+test('settings api failure falls back to the current browser origin for auth redirects', async () => {
+  const redirectUrl = await resolveAuthEmailRedirectUrl({
+    currentOrigin: 'https://app.example.com',
+    settingsApiUrl: 'https://admin.example.com/api/settings/public',
+    fetchImpl: async () => {
+      throw new Error('network failed');
+    },
+  });
+
+  assert.equal(redirectUrl, 'https://app.example.com/');
+});
+
+test('invalid settings api payload falls back to the current browser origin for auth redirects', async () => {
+  const redirectUrl = await resolveAuthEmailRedirectUrl({
+    currentOrigin: 'https://app.example.com',
+    settingsApiUrl: 'https://admin.example.com/api/settings/public',
+    fetchImpl: async () => new Response(JSON.stringify({ publicWebUrl: 'not-a-url' }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }),
+  });
+
+  assert.equal(redirectUrl, 'https://app.example.com/');
 });

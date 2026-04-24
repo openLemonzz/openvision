@@ -40,7 +40,8 @@ test('docker runtime with env present requires backend readiness check', () => {
   assert.equal(config.gate.kind, 'check-required');
   assert.equal(config.supabaseUrl, 'https://demo.supabase.co');
   assert.equal(config.supabaseAnonKey, 'anon-key');
-   assert.equal(config.adminApiUrl, 'http://localhost:8787/api');
+  assert.equal(config.adminApiUrl, 'http://localhost:8787/api');
+  assert.equal('webOrigin' in config, false);
 });
 
 test('local runtime without Supabase config enters config-missing state', () => {

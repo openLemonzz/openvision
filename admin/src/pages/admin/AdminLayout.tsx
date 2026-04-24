@@ -5,6 +5,7 @@ import {
   Users,
   Cpu,
   Image,
+  Globe,
   ArrowLeft,
   Menu,
   X,
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/users', label: '用户管理', icon: Users },
   { path: '/models', label: '模型配置', icon: Cpu },
+  { path: '/settings', label: '站点配置', icon: Globe },
   { path: '/generations', label: '生成记录', icon: Image },
 ];
 

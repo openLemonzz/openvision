@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { apiFetch } from '@/lib/api';
-import type { AdminMe, AdminUser, GenerationRecord, ModelConfig } from '@/lib/types';
+import type {
+  AdminMe,
+  AdminUser,
+  AppSettings,
+  GenerationRecord,
+  ModelConfig,
+} from '@/lib/types';
 import { handleAdminAuthStateChange } from './admin-auth-state';
 
 export function useAdminApp() {
   const [me, setMe] = useState<AdminMe | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [models, setModels] = useState<ModelConfig[]>([]);
+  const [settings, setSettings] = useState<AppSettings>({ publicWebUrl: null });
   const [history, setHistory] = useState<GenerationRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -15,6 +22,7 @@ export function useAdminApp() {
     setMe(null);
     setUsers([]);
     setModels([]);
+    setSettings({ publicWebUrl: null });
     setHistory([]);
   }, []);
 
@@ -25,18 +33,21 @@ export function useAdminApp() {
     if (!currentMe.isAdmin) {
       setUsers([]);
       setModels([]);
+      setSettings({ publicWebUrl: null });
       setHistory([]);
       return currentMe;
     }
 
-    const [nextUsers, nextModels, nextHistory] = await Promise.all([
+    const [nextUsers, nextModels, nextSettings, nextHistory] = await Promise.all([
       apiFetch<AdminUser[]>('/users', {}, accessToken),
       apiFetch<ModelConfig[]>('/models', {}, accessToken),
+      apiFetch<AppSettings>('/settings', {}, accessToken),
       apiFetch<GenerationRecord[]>('/generations', {}, accessToken),
     ]);
 
     setUsers(nextUsers);
     setModels(nextModels);
+    setSettings(nextSettings);
     setHistory(nextHistory);
     return currentMe;
   }, []);
@@ -140,6 +151,15 @@ export function useAdminApp() {
     setModels(nextModels.map((model) => ({ ...model, apiKey: '' })));
   }, []);
 
+  const updateSettings = useCallback(async (nextSettings: AppSettings) => {
+    const savedSettings = await apiFetch<AppSettings>('/settings', {
+      method: 'PUT',
+      body: JSON.stringify(nextSettings),
+    });
+    setSettings(savedSettings);
+    return savedSettings;
+  }, []);
+
   const deleteGeneration = useCallback(async (id: string) => {
     await apiFetch(`/generations/${id}`, { method: 'DELETE' });
     setHistory((prev) => prev.filter((item) => item.id !== id));
@@ -155,6 +175,7 @@ export function useAdminApp() {
     me,
     users,
     models,
+    settings,
     history,
     isAdminLoggedIn: !!me?.isAdmin,
     adminLogin,
@@ -162,6 +183,7 @@ export function useAdminApp() {
     toggleUserStatus,
     deleteUser,
     updateModels,
+    updateSettings,
     deleteGeneration,
     refresh,
   };
