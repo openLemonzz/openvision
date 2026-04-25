@@ -1,17 +1,20 @@
 import { useState, useEffect } from 'react';
-import { Grid3X3, List, Trash2, Maximize2, Heart } from 'lucide-react';
+import { Grid3X3, List } from 'lucide-react';
+import CopyableMonoValue from '../components/CopyableMonoValue';
+import GenerationImageActions from '../components/GenerationImageActions';
 import type { GenerationRecord } from '../hooks/useGeneration';
 
 interface GalleryProps {
   history: GenerationRecord[];
   onDelete: (id: string) => void;
   onToggleFavorite: (id: string) => void;
+  onEditImage: (imageUrl: string, prompt?: string) => void;
   lifecycleTick?: number;
 }
 
 const FILTER_OPTIONS = ['全部', '1:1', '16:9', '3:4', '9:16'];
 
-export default function Gallery({ history, onDelete, onToggleFavorite }: GalleryProps) {
+export default function Gallery({ history, onDelete, onToggleFavorite, onEditImage }: GalleryProps) {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [filter, setFilter] = useState('全部');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -96,30 +99,21 @@ export default function Gallery({ history, onDelete, onToggleFavorite }: Gallery
                 className="w-full aspect-square object-contain bg-[#0D0D0D] block"
               />
               <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-4">
-                <div className="flex justify-end gap-2">
-                  <button
-                    onClick={e => { e.stopPropagation(); setSelectedImage(record.imageUrl); }}
-                    className="text-white hover:text-[#A8A8A8] transition-colors"
-                  >
-                    <Maximize2 size={14} />
-                  </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); onToggleFavorite(record.id); }}
-                    className="text-red-400 hover:text-red-300 transition-colors"
-                    title="取消收藏"
-                  >
-                    <Heart size={14} fill="currentColor" />
-                  </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); onDelete(record.id); }}
-                    className="text-white hover:text-red-400 transition-colors"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                <GenerationImageActions
+                  imageUrl={record.imageUrl}
+                  downloadName={`${record.generationCode || record.pictureId || 'vision-image'}.png`}
+                  isFavorite
+                  onToggleFavorite={() => onToggleFavorite(record.id)}
+                  onDelete={() => onDelete(record.id)}
+                  onEditImage={() => onEditImage(record.imageUrl, record.prompt)}
+                  onZoom={() => setSelectedImage(record.imageUrl)}
+                />
                 <div>
                   <p className="text-[10px] text-[#A8A8A8] font-mono-data mb-1">{record.aspectRatio}</p>
-                  <p className="text-[9px] text-[#444] font-mono-data mb-1 truncate">pic: {record.pictureId || '—'}</p>
+                  <div className="mb-1 flex flex-col gap-1">
+                    <CopyableMonoValue prefix="gen" value={record.generationCode} />
+                    <CopyableMonoValue prefix="pic" value={record.pictureId} />
+                  </div>
                   <p className="text-[11px] text-white leading-snug line-clamp-3">{record.prompt}</p>
                 </div>
               </div>
@@ -133,40 +127,32 @@ export default function Gallery({ history, onDelete, onToggleFavorite }: Gallery
               key={record.id}
               className="grid grid-cols-[100px_1fr_auto] gap-4 border-t border-[#222] py-4 items-center group hover:bg-white/[0.02] transition-colors"
             >
-              <img
-                src={record.imageUrl}
-                alt={record.prompt}
-                className="w-full aspect-square object-contain bg-[#0D0D0D] block border border-[#222]"
-              />
+              <div className="group relative">
+                <img
+                  src={record.imageUrl}
+                  alt={record.prompt}
+                  className="w-full aspect-square object-contain bg-[#0D0D0D] block border border-[#222]"
+                />
+                <GenerationImageActions
+                  imageUrl={record.imageUrl}
+                  downloadName={`${record.generationCode || record.pictureId || 'vision-image'}.png`}
+                  isFavorite
+                  onToggleFavorite={() => onToggleFavorite(record.id)}
+                  onDelete={() => onDelete(record.id)}
+                  onEditImage={() => onEditImage(record.imageUrl, record.prompt)}
+                  onZoom={() => setSelectedImage(record.imageUrl)}
+                />
+              </div>
               <div>
                 <p className="text-[12px] text-white leading-relaxed">{record.prompt}</p>
                 <div className="flex gap-4 mt-2">
                   <span className="text-[10px] text-[#4D4D4D] font-mono-data">{record.aspectRatio}</span>
                   <span className="text-[10px] text-[#4D4D4D] font-mono-data">{record.engine}</span>
-                  <span className="text-[9px] text-[#444] font-mono-data truncate">pic: {record.pictureId || '—'}</span>
+                  <CopyableMonoValue prefix="gen" value={record.generationCode} />
+                  <CopyableMonoValue prefix="pic" value={record.pictureId} />
                 </div>
               </div>
-              <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={() => setSelectedImage(record.imageUrl)}
-                  className="text-[#A8A8A8] hover:text-white transition-colors p-1"
-                >
-                  <Maximize2 size={13} />
-                </button>
-                <button
-                  onClick={() => onToggleFavorite(record.id)}
-                  className="text-red-400 hover:text-red-300 transition-colors p-1"
-                  title="取消收藏"
-                >
-                  <Heart size={13} fill="currentColor" />
-                </button>
-                <button
-                  onClick={() => onDelete(record.id)}
-                  className="text-[#A8A8A8] hover:text-red-400 transition-colors p-1"
-                >
-                  <Trash2 size={13} />
-                </button>
-              </div>
+              <div />
             </div>
           ))}
         </div>

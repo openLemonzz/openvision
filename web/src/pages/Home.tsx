@@ -3,6 +3,7 @@ import AsciiCanvas from '../components/AsciiCanvas';
 import GenerateConsole from '../components/GenerateConsole';
 import HistoryStream from '../components/HistoryStream';
 import type { GenerationRecord } from '../hooks/useGeneration';
+import type { GenerationCapacitySnapshot } from '../lib/utils';
 import type { ModelConfig } from './admin/AdminModels';
 import {
   HOME_HERO_SLOGAN,
@@ -16,14 +17,27 @@ interface HomeProps {
   playHomeIntroAnimation: boolean;
   isGenerating: boolean;
   isLoggedIn: boolean;
+  capacity: GenerationCapacitySnapshot | null;
+  isCheckingCapacity: boolean;
+  isWaitingForCapacityConfirmation: boolean;
   history: GenerationRecord[];
   models: ModelConfig[];
   modelsError: string | null;
   modelsLoading: boolean;
+  editDraft: {
+    imageUrl: string;
+    prompt?: string;
+    aspectRatio?: '1:1' | '16:9' | '3:4' | '9:16';
+    styleStrength?: number;
+    engine?: string;
+  } | null;
+  onConsumeEditDraft: () => void;
   lifecycleTick: number;
   onGenerate: (prompt: string, aspectRatio: '1:1' | '16:9' | '3:4' | '9:16', styleStrength: number, engine: string) => Promise<string>;
   onRequireAuth: () => void;
   onDeleteRecord: (id: string) => void;
+  onToggleFavoriteRecord: (id: string) => void;
+  onRetryGenerateRecord: (prompt: string, aspectRatio: '1:1' | '16:9' | '3:4' | '9:16', styleStrength: number, engine: string) => void;
 }
 
 const HOME_HERO_SLOGAN_TOTAL_MS =
@@ -34,16 +48,27 @@ export default function Home({
   playHomeIntroAnimation,
   isGenerating,
   isLoggedIn,
+  capacity,
+  isCheckingCapacity,
+  isWaitingForCapacityConfirmation,
   history,
   models,
   modelsError,
   modelsLoading,
+  editDraft,
+  onConsumeEditDraft,
   lifecycleTick,
   onGenerate,
   onRequireAuth,
   onDeleteRecord,
+  onToggleFavoriteRecord,
+  onRetryGenerateRecord,
 }: HomeProps) {
   const [remixPrompt, setRemixPrompt] = useState<string | undefined>(undefined);
+  const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
+  const [draftAspectRatio, setDraftAspectRatio] = useState<'1:1' | '16:9' | '3:4' | '9:16' | null>(null);
+  const [draftStyleStrength, setDraftStyleStrength] = useState<number | null>(null);
+  const [draftEngine, setDraftEngine] = useState<string | null>(null);
   const [sloganElapsedMs, setSloganElapsedMs] = useState(() =>
     homeIntroStartedAtMs === null ? 0 : Math.max(0, Date.now() - homeIntroStartedAtMs)
   );
@@ -54,6 +79,21 @@ export default function Home({
     },
     [onGenerate]
   );
+
+  useEffect(() => {
+    if (!editDraft) {
+      return;
+    }
+
+    setReferenceImageUrl(editDraft.imageUrl);
+    if (editDraft.prompt) {
+      setRemixPrompt(editDraft.prompt);
+    }
+    setDraftAspectRatio(editDraft.aspectRatio ?? null);
+    setDraftStyleStrength(editDraft.styleStrength ?? null);
+    setDraftEngine(editDraft.engine ?? null);
+    onConsumeEditDraft();
+  }, [editDraft, onConsumeEditDraft]);
 
   useEffect(() => {
     if (homeIntroStartedAtMs === null) {
@@ -128,17 +168,42 @@ export default function Home({
           <GenerateConsole
             isGenerating={isGenerating}
             isLoggedIn={isLoggedIn}
+            capacity={capacity}
+            isCheckingCapacity={isCheckingCapacity}
+            isWaitingForCapacityConfirmation={isWaitingForCapacityConfirmation}
             models={models}
             modelsError={modelsError}
             modelsLoading={modelsLoading}
+            referenceImageUrl={referenceImageUrl}
             remixPrompt={remixPrompt}
+            draftAspectRatio={draftAspectRatio}
+            draftStyleStrength={draftStyleStrength}
+            draftEngine={draftEngine}
             onGenerate={handleGenerate}
             onRequireAuth={onRequireAuth}
+            onClearReferenceImage={() => {
+              setReferenceImageUrl(null);
+              setDraftAspectRatio(null);
+              setDraftStyleStrength(null);
+              setDraftEngine(null);
+            }}
           />
         </section>
 
         {/* History Stream */}
-        <HistoryStream records={history.slice(0, 1)} onDelete={onDeleteRecord} onRemix={setRemixPrompt} lifecycleTick={lifecycleTick} />
+        <HistoryStream
+          records={history.slice(0, 1)}
+          onDelete={onDeleteRecord}
+          onToggleFavorite={onToggleFavoriteRecord}
+          onEditImage={(imageUrl, prompt) => {
+            setReferenceImageUrl(imageUrl);
+            setRemixPrompt(prompt);
+          }}
+          onRetryGenerate={(prompt, aspectRatio, styleStrength, engine) => {
+            onRetryGenerateRecord(prompt, aspectRatio, styleStrength, engine);
+          }}
+          lifecycleTick={lifecycleTick}
+        />
       </div>
     </div>
   );

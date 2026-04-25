@@ -6,7 +6,6 @@ import {
   UserCircle,
   Menu,
   X,
-  Settings,
   ArrowLeft,
   Clock,
 } from 'lucide-react';
@@ -40,10 +39,14 @@ export default function ConsoleLayout() {
       >
         {/* Logo */}
         <div className="h-14 flex items-center px-5 border-b border-[#222]">
-          <Settings size={15} className="text-white mr-2.5" />
-          <span className="text-[13px] font-medium tracking-[0.12em] uppercase">
-            控制台
-          </span>
+          <Link
+            to="/"
+            onClick={() => setSidebarOpen(false)}
+            className="flex items-center gap-2.5 text-[13px] font-medium tracking-[0.12em] uppercase text-white transition-colors hover:text-[#d7d7d7]"
+          >
+            <ArrowLeft size={15} />
+            <span>返回工坊</span>
+          </Link>
           <button
             onClick={() => setSidebarOpen(false)}
             className="ml-auto lg:hidden text-[#666] hover:text-white"
@@ -74,18 +77,6 @@ export default function ConsoleLayout() {
             );
           })}
         </nav>
-
-        {/* Bottom */}
-        <div className="p-3 border-t border-[#222]">
-          <Link
-            to="/"
-            onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-3 px-3 py-2.5 text-[12px] text-[#888] hover:text-white transition-colors"
-          >
-            <ArrowLeft size={14} />
-            <span>返回工坊</span>
-          </Link>
-        </div>
       </aside>
 
       {/* Main */}

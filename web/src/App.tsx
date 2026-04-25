@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import Navigation from './components/Navigation';
@@ -67,8 +67,36 @@ function AppRoutes({
 }) {
   const auth = useAuth();
   const navigate = useNavigate();
+  const [workshopEditDraft, setWorkshopEditDraft] = useState<{
+    imageUrl: string;
+    prompt?: string;
+    aspectRatio?: '1:1' | '16:9' | '3:4' | '9:16';
+    styleStrength?: number;
+    engine?: string;
+  } | null>(null);
   const { models, error: modelsError, loading: modelsLoading } = usePublicModels();
   const gen = useGeneration(auth.user?.id, models);
+
+  const openWorkshopEdit = useCallback((
+    imageUrl: string,
+    prompt?: string,
+    aspectRatio?: '1:1' | '16:9' | '3:4' | '9:16',
+    styleStrength?: number,
+    engine?: string,
+  ) => {
+    setWorkshopEditDraft({ imageUrl, prompt, aspectRatio, styleStrength, engine });
+    navigate('/', { replace: false });
+  }, [navigate]);
+
+  const openWorkshopRetry = useCallback((
+    prompt: string,
+    aspectRatio: '1:1' | '16:9' | '3:4' | '9:16',
+    styleStrength: number,
+    engine: string,
+  ) => {
+    setWorkshopEditDraft({ imageUrl: '', prompt, aspectRatio, styleStrength, engine });
+    navigate('/', { replace: false });
+  }, [navigate]);
 
   // P0-2: 登录成功后返回原目标页
   useEffect(() => {
@@ -102,6 +130,7 @@ function AppRoutes({
               history={gen.favoriteRecords}
               onDelete={gen.deleteRecord}
               onToggleFavorite={gen.toggleFavorite}
+              onEditImage={openWorkshopEdit}
               lifecycleTick={gen.lifecycleTick}
             />
           }
@@ -113,6 +142,8 @@ function AppRoutes({
               history={gen.history}
               onDelete={gen.deleteRecord}
               onToggleFavorite={gen.toggleFavorite}
+              onEditImage={openWorkshopEdit}
+              onRetryGenerate={openWorkshopRetry}
               lifecycleTick={gen.lifecycleTick}
             />
           }
@@ -163,14 +194,21 @@ function AppRoutes({
                     homeIntroStartedAtMs={homeIntroStartedAtMs}
                     isGenerating={gen.isGenerating}
                     isLoggedIn={auth.isLoggedIn}
+                    capacity={gen.capacity}
+                    isCheckingCapacity={gen.isCheckingCapacity}
+                    isWaitingForCapacityConfirmation={gen.isWaitingForCapacityConfirmation}
                     history={gen.history}
                     models={models}
                     modelsError={modelsError}
                     modelsLoading={modelsLoading}
+                    editDraft={workshopEditDraft}
+                    onConsumeEditDraft={() => setWorkshopEditDraft(null)}
                     lifecycleTick={gen.lifecycleTick}
                     onGenerate={gen.generate}
                     onRequireAuth={auth.openLogin}
                     onDeleteRecord={gen.deleteRecord}
+                    onToggleFavoriteRecord={gen.toggleFavorite}
+                    onRetryGenerateRecord={openWorkshopRetry}
                   />
                 }
               />

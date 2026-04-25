@@ -51,6 +51,7 @@ export default function App() {
             <AdminUsers
               users={admin.users}
               onToggleStatus={admin.toggleUserStatus}
+              onUpdateUserSettings={admin.updateUserSettings}
               onDeleteUser={admin.deleteUser}
               currentAdminId={admin.me?.id}
             />

@@ -170,6 +170,21 @@ export function useAdminApp() {
     setUsers((prev) => prev.filter((user) => user.id !== id));
   }, []);
 
+  const updateUserSettings = useCallback(async (id: string, concurrencyLimit: number) => {
+    const saved = await apiFetch<{ id: string; concurrencyLimit: number }>(`/users/${id}/settings`, {
+      method: 'PATCH',
+      body: JSON.stringify({ concurrencyLimit }),
+    });
+    setUsers((prev) =>
+      prev.map((user) =>
+        user.id === id
+          ? { ...user, concurrencyLimit: saved.concurrencyLimit }
+          : user
+      )
+    );
+    return saved;
+  }, []);
+
   return {
     loading,
     me,
@@ -182,6 +197,7 @@ export function useAdminApp() {
     adminLogout,
     toggleUserStatus,
     deleteUser,
+    updateUserSettings,
     updateModels,
     updateSettings,
     deleteGeneration,

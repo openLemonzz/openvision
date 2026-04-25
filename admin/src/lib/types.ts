@@ -7,6 +7,7 @@ export interface AdminUser {
   status: 'active' | 'banned' | 'pending';
   role: 'user' | 'admin';
   createdAt: string;
+  concurrencyLimit: number;
   generationCount: number;
   inviteCount: number;
 }
@@ -27,6 +28,7 @@ export interface ModelConfig {
 
 export interface GenerationRecord {
   id: string;
+  generationCode: string | null;
   pictureId: string | null;
   prompt: string;
   aspectRatio: '1:1' | '16:9' | '3:4' | '9:16';
@@ -37,6 +39,8 @@ export interface GenerationRecord {
   expiresAt: number | null;
   lifecycle: 'pending' | 'generating' | 'active' | 'expiring' | 'expired' | null;
   status: 'pending' | 'generating' | 'completed' | 'failed';
+  errorMessage?: string | null;
+  errorDetails?: string | null;
   isFavorite: boolean;
   userId?: string;
 }

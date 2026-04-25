@@ -1,13 +1,18 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { adminFetch } from '@/lib/admin-api';
+import {
+  countActiveGenerations,
+  type GenerationCapacitySnapshot,
+} from '@/lib/utils';
 import type { ModelConfig } from '@/pages/admin/AdminModels';
 
 export type AspectRatio = '1:1' | '16:9' | '3:4' | '9:16';
 
 export interface GenerationRecord {
   id: string;
+  generationCode: string | null;
   pictureId: string | null;
   prompt: string;
   aspectRatio: AspectRatio;
@@ -82,7 +87,18 @@ export function calculateLifecycle(record: GenerationRecord): LifecycleInfo {
 }
 
 function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  const rawMessage = error instanceof Error ? error.message : String(error);
+
+  try {
+    const payload = JSON.parse(rawMessage) as { error?: string };
+    if (typeof payload.error === 'string' && payload.error.trim()) {
+      return payload.error.trim();
+    }
+  } catch {
+    // ignore non-JSON error payloads
+  }
+
+  return rawMessage;
 }
 
 // ======== Hook ========
@@ -91,9 +107,10 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     getSession: () => Promise<{ data: { session: { access_token?: string } | null } }>;
   };
   const [history, setHistory] = useState<GenerationRecord[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const generatingRef = useRef(false);
   const [lifecycleTick, setLifecycleTick] = useState(Date.now());
+  const [capacity, setCapacity] = useState<GenerationCapacitySnapshot | null>(null);
+  const [isCheckingCapacity, setIsCheckingCapacity] = useState(false);
+  const [isWaitingForCapacityConfirmation, setIsWaitingForCapacityConfirmation] = useState(false);
 
   const getAccessToken = useCallback(async () => {
     const { data: sessionData } = await authClient.getSession();
@@ -147,6 +164,53 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     void loadHistory();
   }, [loadHistory]);
 
+  const loadGenerationCapacity = useCallback(async () => {
+    if (!userId) {
+      setCapacity(null);
+      setIsCheckingCapacity(false);
+      setIsWaitingForCapacityConfirmation(false);
+      return;
+    }
+
+    setIsCheckingCapacity(true);
+
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        setCapacity(null);
+        return;
+      }
+
+      const nextCapacity = await adminFetch<GenerationCapacitySnapshot>('/my/generation-capacity', {}, accessToken);
+      setCapacity(nextCapacity);
+      setIsWaitingForCapacityConfirmation(false);
+    } catch (error) {
+      console.error('[FE] Failed to load generation capacity:', getErrorMessage(error));
+      setCapacity(null);
+    } finally {
+      setIsCheckingCapacity(false);
+    }
+  }, [getAccessToken, userId]);
+
+  useEffect(() => {
+    if (!userId) {
+      setCapacity(null);
+      setIsCheckingCapacity(false);
+      setIsWaitingForCapacityConfirmation(false);
+      return;
+    }
+
+    void loadGenerationCapacity();
+    const interval = window.setInterval(() => {
+      void loadGenerationCapacity();
+    }, 5000);
+
+    return () => window.clearInterval(interval);
+  }, [loadGenerationCapacity, userId]);
+
+  const activeGenerationCount = countActiveGenerations(history);
+  const isGenerating = activeGenerationCount > 0;
+
   // Generate
   const generate = useCallback(async (
     prompt: string,
@@ -154,10 +218,12 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     styleStrength: number,
     engine: string
   ) => {
-    if (generatingRef.current || !userId) {
-      console.warn('[FE] Generate skipped: generatingRef=', generatingRef.current, 'userId=', userId);
+    if (!userId) {
+      console.warn('[FE] Generate skipped: userId=', userId);
       return '';
     }
+
+    setIsWaitingForCapacityConfirmation(true);
 
     console.log('[FE] ========== GENERATE START ==========');
     console.log('[FE] userId:', userId);
@@ -177,6 +243,7 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     const tempId = `temp-${Date.now()}`;
     const tempRecord: GenerationRecord = {
       id: tempId,
+      generationCode: null,
       pictureId: null,
       prompt,
       aspectRatio,
@@ -192,8 +259,6 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     };
 
     let success = false;
-    generatingRef.current = true;
-    setIsGenerating(true);
     setHistory(prev => [tempRecord, ...prev]);
 
     try {
@@ -228,23 +293,29 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
 
       // 延迟刷新历史记录，给后端数据库同步时间
       setTimeout(() => void loadHistory(), 1200);
+      setTimeout(() => void loadGenerationCapacity(), 1200);
       setTimeout(() => void loadHistory(), 3500);
+      setTimeout(() => void loadGenerationCapacity(), 3500);
 
       console.log('[FE] ========== GENERATE END (success) ==========');
       return response.id;
     } catch (err: unknown) {
-      toast.error('生成异常: ' + getErrorMessage(err));
+      const message = getErrorMessage(err);
+      if (message === 'Concurrency limit reached') {
+        toast.error('已达到并发上限');
+      } else {
+        toast.error('生成异常: ' + message);
+      }
       console.error('[FE] ========== GENERATE END (CRASH) ==========');
-      console.error('[FE] Generation crash:', getErrorMessage(err), err);
+      console.error('[FE] Generation crash:', message, err);
       return '';
     } finally {
-      generatingRef.current = false;
-      setIsGenerating(false);
       if (!success) {
         setHistory(prev => prev.filter(r => r.id !== tempId));
+        setIsWaitingForCapacityConfirmation(false);
       }
     }
-  }, [getAccessToken, loadHistory, models, userId]);
+  }, [getAccessToken, loadGenerationCapacity, loadHistory, models, userId]);
 
   // Toggle favorite
   const toggleFavorite = useCallback(async (id: string) => {
@@ -285,5 +356,19 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
 
   const favoriteRecords = history.filter(r => r.isFavorite);
 
-  return { history, favoriteRecords, isGenerating, generate, toggleFavorite, deleteRecord, refreshHistory: loadHistory, lifecycleTick };
+  return {
+    history,
+    favoriteRecords,
+    isGenerating,
+    activeGenerationCount,
+    capacity,
+    isCheckingCapacity,
+    isWaitingForCapacityConfirmation,
+    generate,
+    toggleFavorite,
+    deleteRecord,
+    refreshHistory: loadHistory,
+    refreshGenerationCapacity: loadGenerationCapacity,
+    lifecycleTick,
+  };
 }

@@ -1,5 +1,7 @@
-import { useState, useMemo } from 'react';
-import { Search, Trash2, Image, Clock, Ratio, Zap, Mail } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Search, Image, Clock, Ratio, Zap, Mail, Maximize2, AlertTriangle } from 'lucide-react';
+import CopyableMonoValue from '@/components/CopyableMonoValue';
+import DeleteConfirmPopover from '@/components/DeleteConfirmPopover';
 import type { GenerationRecord } from '@/lib/types';
 import type { AdminUser } from './AdminUsers';
 
@@ -18,6 +20,19 @@ export default function AdminGenerations({ history, users, onDelete }: AdminGene
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'generating' | 'failed'>('all');
   const [engineFilter, setEngineFilter] = useState<string>('all');
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [expandedErrorIds, setExpandedErrorIds] = useState<Record<string, true>>({});
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setLightboxImage(null);
+      }
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const engines = useMemo(() => {
     const set = new Set(history.map(h => h.engine));
@@ -90,8 +105,8 @@ export default function AdminGenerations({ history, users, onDelete }: AdminGene
       {/* Table */}
       <div className="border border-[#222]">
         {/* Header */}
-        <div className="hidden lg:grid lg:grid-cols-[60px_1fr_100px_80px_100px_120px_50px] gap-0 bg-[#111] border-b border-[#222]">
-          {['图片', 'Prompt', '比例', '引擎', '强度', '时间', '操作'].map(h => (
+        <div className="hidden lg:grid lg:grid-cols-[80px_1fr_100px_80px_100px_120px_70px] gap-0 bg-[#111] border-b border-[#222]">
+          {['图片', 'Prompt / 失败信息', '比例', '引擎', '强度', '时间', '操作'].map(h => (
             <div key={h} className="px-4 py-3 text-[9px] text-[#666] uppercase tracking-[0.15em] font-mono-data">
               {h}
             </div>
@@ -107,13 +122,22 @@ export default function AdminGenerations({ history, users, onDelete }: AdminGene
           filtered.map(gen => (
             <div
               key={gen.id}
-              className="lg:grid lg:grid-cols-[60px_1fr_100px_80px_100px_120px_50px] gap-0 border-b border-[#1a1a1a] hover:bg-white/[0.02] transition-colors"
+              className="lg:grid lg:grid-cols-[80px_1fr_100px_80px_100px_120px_70px] gap-0 border-b border-[#1a1a1a] hover:bg-white/[0.02] transition-colors"
             >
               <div className="px-4 py-3 flex items-center">
                 {gen.imageUrl ? (
-                  <img src={gen.imageUrl} alt="" className="w-10 h-10 object-cover border border-[#333]" />
+                  <button
+                    onClick={() => setLightboxImage(gen.imageUrl)}
+                    className="group/image relative block"
+                    title="放大查看"
+                  >
+                    <img src={gen.imageUrl} alt="" className="w-12 h-12 object-cover border border-[#333]" />
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/65 opacity-0 group-hover/image:opacity-100 transition-opacity">
+                      <Maximize2 size={14} className="text-white" />
+                    </span>
+                  </button>
                 ) : (
-                  <div className="w-10 h-10 bg-[#1a1a1a] border border-[#333] flex items-center justify-center">
+                  <div className="w-12 h-12 bg-[#1a1a1a] border border-[#333] flex items-center justify-center">
                     <Image size={14} className="text-[#444]" />
                   </div>
                 )}
@@ -121,14 +145,50 @@ export default function AdminGenerations({ history, users, onDelete }: AdminGene
               <div className="px-4 py-3 flex flex-col justify-center min-w-0">
                 <p className="text-[11px] text-[#aaa] truncate">{gen.prompt}</p>
                 <div className="flex items-center gap-3 mt-1">
-                  <span className="text-[9px] text-[#444] font-mono-data truncate" title={gen.pictureId || '—'}>
-                    pic: {gen.pictureId || '—'}
-                  </span>
+                  <CopyableMonoValue prefix="gen" value={gen.generationCode} />
+                  <CopyableMonoValue prefix="pic" value={gen.pictureId} />
                   <span className="text-[9px] text-[#444] font-mono-data truncate" title={getUserEmail(gen.userId)}>
                     <Mail size={8} className="inline mr-0.5 text-[#555]" />
                     {getUserEmail(gen.userId)}
                   </span>
                 </div>
+                {gen.status === 'failed' ? (
+                  <div className="mt-2">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle size={12} className="mt-0.5 shrink-0 text-red-400" />
+                      <div className="min-w-0">
+                        <p className="text-[11px] text-red-300 break-words">
+                          {gen.errorMessage || '生成失败'}
+                        </p>
+                        {gen.errorDetails ? (
+                          <button
+                            onClick={() => {
+                              setExpandedErrorIds((prev) => {
+                                const next = { ...prev };
+                                if (next[gen.id]) {
+                                  delete next[gen.id];
+                                } else {
+                                  next[gen.id] = true;
+                                }
+                                return next;
+                              });
+                            }}
+                            className="mt-1 text-[10px] text-[#888] hover:text-white font-mono-data transition-colors"
+                          >
+                            {expandedErrorIds[gen.id] ? '收起详情' : '查看详情'}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                    {expandedErrorIds[gen.id] && gen.errorDetails ? (
+                      <div className="mt-2 border border-red-400/15 bg-red-400/5 px-3 py-2">
+                        <pre className="whitespace-pre-wrap break-all text-[10px] leading-relaxed text-red-200 font-mono-data">
+                          {gen.errorDetails}
+                        </pre>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
               <div className="px-4 py-3 flex items-center gap-1 text-[10px] text-[#888] font-mono-data">
                 <Ratio size={10} className="text-[#555]" />
@@ -146,18 +206,33 @@ export default function AdminGenerations({ history, users, onDelete }: AdminGene
                 {formatTime(gen.createdAt)}
               </div>
               <div className="px-4 py-3 flex items-center">
-                <button
-                  onClick={() => onDelete(gen.id)}
-                  className="text-[#555] hover:text-red-400 transition-colors p-1"
-                  title="删除"
-                >
-                  <Trash2 size={13} />
-                </button>
+                <DeleteConfirmPopover onConfirm={() => onDelete(gen.id)} />
               </div>
             </div>
           ))
         )}
       </div>
+
+      {lightboxImage ? (
+        <div
+          className="fixed inset-0 z-[300] bg-black/95 flex items-center justify-center p-8"
+          onClick={() => setLightboxImage(null)}
+        >
+          <img
+            src={lightboxImage}
+            alt=""
+            className="max-w-full max-h-full object-contain"
+            onClick={(event) => event.stopPropagation()}
+          />
+          <button
+            onClick={() => setLightboxImage(null)}
+            className="absolute top-6 right-6 text-[#A8A8A8] hover:text-white text-[12px] uppercase tracking-[0.2em] font-mono-data"
+            aria-label="关闭"
+          >
+            Close
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

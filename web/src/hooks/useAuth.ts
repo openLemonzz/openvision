@@ -28,6 +28,7 @@ interface WebMePayload {
   inviteCount: number;
   isDisabled: boolean;
   isAdmin: boolean;
+  concurrencyLimit: number;
 }
 
 // ======== Types ========
@@ -37,6 +38,7 @@ export interface UserProfile {
   email: string;
   inviteCode: string;
   inviteCount: number;
+  concurrencyLimit: number;
 }
 
 // ======== Hook ========
@@ -95,6 +97,7 @@ export function useAuth() {
       email: me.email || authUser.email || '',
       inviteCode: me.inviteCode || '',
       inviteCount: me.inviteCount || 0,
+      concurrencyLimit: me.concurrencyLimit || 1,
     });
   }, [authClient]);
 

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Search, UserCheck, UserX, Mail, Shield, Trash2 } from 'lucide-react';
 import type { AdminUser } from '@/lib/types';
 
@@ -7,16 +7,32 @@ export type { AdminUser } from '@/lib/types';
 interface AdminUsersProps {
   users: AdminUser[];
   onToggleStatus: (id: string) => void;
+  onUpdateUserSettings: (id: string, concurrencyLimit: number) => Promise<{ id: string; concurrencyLimit: number }>;
   onDeleteUser: (id: string) => Promise<void>;
   currentAdminId?: string;
 }
 
-export default function AdminUsers({ users, onToggleStatus, onDeleteUser, currentAdminId }: AdminUsersProps) {
+export default function AdminUsers({
+  users,
+  onToggleStatus,
+  onUpdateUserSettings,
+  onDeleteUser,
+  currentAdminId,
+}: AdminUsersProps) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'banned' | 'pending'>('all');
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [concurrencyDrafts, setConcurrencyDrafts] = useState<Record<string, string>>({});
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({});
+  const [savingUserId, setSavingUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setConcurrencyDrafts(
+      Object.fromEntries(users.map((user) => [user.id, String(user.concurrencyLimit)]))
+    );
+  }, [users]);
 
   const filtered = useMemo(() => {
     return users.filter(u => {
@@ -39,6 +55,29 @@ export default function AdminUsers({ users, onToggleStatus, onDeleteUser, curren
       setDeleteError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleSaveConcurrency = async (user: AdminUser) => {
+    const rawValue = concurrencyDrafts[user.id] ?? String(user.concurrencyLimit);
+    const parsedValue = Number(rawValue);
+
+    if (!Number.isInteger(parsedValue) || parsedValue < 1) {
+      setSaveErrors((prev) => ({ ...prev, [user.id]: '请输入大于等于 1 的整数' }));
+      return;
+    }
+
+    setSavingUserId(user.id);
+    setSaveErrors((prev) => ({ ...prev, [user.id]: '' }));
+    try {
+      await onUpdateUserSettings(user.id, parsedValue);
+    } catch (error) {
+      setSaveErrors((prev) => ({
+        ...prev,
+        [user.id]: error instanceof Error ? error.message : String(error),
+      }));
+    } finally {
+      setSavingUserId(null);
     }
   };
 
@@ -85,8 +124,8 @@ export default function AdminUsers({ users, onToggleStatus, onDeleteUser, curren
       {/* Table */}
       <div className="border border-[#222]">
         {/* Header */}
-        <div className="hidden md:grid md:grid-cols-[1fr_1fr_100px_80px_100px_100px_100px] gap-0 bg-[#111] border-b border-[#222]">
-          {['用户名', '邮箱', '状态', '角色', '生成数', '邀请数', '操作'].map(h => (
+        <div className="hidden md:grid md:grid-cols-[1fr_1fr_100px_80px_120px_100px_100px_140px] gap-0 bg-[#111] border-b border-[#222]">
+          {['用户名', '邮箱', '状态', '角色', '并发数', '生成数', '邀请数', '操作'].map(h => (
             <div key={h} className="px-4 py-3 text-[9px] text-[#666] uppercase tracking-[0.15em] font-mono-data">
               {h}
             </div>
@@ -102,7 +141,7 @@ export default function AdminUsers({ users, onToggleStatus, onDeleteUser, curren
           filtered.map(user => (
             <div
               key={user.id}
-              className="md:grid md:grid-cols-[1fr_1fr_100px_80px_100px_100px_100px] gap-0 border-b border-[#1a1a1a] hover:bg-white/[0.02] transition-colors"
+              className="md:grid md:grid-cols-[1fr_1fr_100px_80px_120px_100px_100px_140px] gap-0 border-b border-[#1a1a1a] hover:bg-white/[0.02] transition-colors"
             >
               <div className="px-4 py-3 flex items-center gap-2">
                 <span className="text-[12px] text-white">{user.username}</span>
@@ -132,6 +171,36 @@ export default function AdminUsers({ users, onToggleStatus, onDeleteUser, curren
                   <Shield size={9} className="inline mr-1 -mt-0.5" />
                   {user.role === 'admin' ? '管理员' : '用户'}
                 </span>
+              </div>
+              <div className="px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={concurrencyDrafts[user.id] ?? String(user.concurrencyLimit)}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setConcurrencyDrafts((prev) => ({ ...prev, [user.id]: nextValue }));
+                      if (saveErrors[user.id]) {
+                        setSaveErrors((prev) => ({ ...prev, [user.id]: '' }));
+                      }
+                    }}
+                    className="w-[64px] bg-transparent border border-[#333] px-2 py-1 text-[11px] text-white font-mono-data focus:border-white focus:outline-none"
+                  />
+                  <button
+                    onClick={() => void handleSaveConcurrency(user)}
+                    disabled={savingUserId === user.id}
+                    className="text-[10px] font-mono-data px-2 py-1 border border-[#333] text-[#aaa] hover:text-white hover:border-[#555] transition-colors disabled:opacity-50"
+                  >
+                    {savingUserId === user.id ? '保存中' : '保存'}
+                  </button>
+                </div>
+                {saveErrors[user.id] ? (
+                  <p className="mt-1 text-[10px] text-red-400 font-mono-data leading-snug">
+                    {saveErrors[user.id]}
+                  </p>
+                ) : null}
               </div>
               <div className="px-4 py-3 flex items-center text-[11px] text-[#aaa] font-mono-data">
                 {user.generationCount}

@@ -17,12 +17,9 @@ drop policy if exists "Users can view own profile" on public.profiles;
 drop policy if exists "Users can update own profile" on public.profiles;
 drop policy if exists "Users can view own referrals" on public.referrals;
 drop policy if exists "Anyone can view enabled models" on public.model_configs;
-drop policy if exists "Users can view own invites" on public.invites;
-drop policy if exists "Anyone can insert invites" on public.invites;
-drop policy if exists "Users can update own invites" on public.invites;
-
 create table if not exists public.generations (
   id uuid primary key default gen_random_uuid(),
+  generation_code text unique,
   picture_id text unique,
   user_id uuid not null references auth.users(id) on delete cascade,
   prompt text not null,
@@ -31,6 +28,8 @@ create table if not exists public.generations (
   engine text not null default 'DALL-E 3',
   image_url text,
   status text not null default 'pending' check (status in ('pending', 'generating', 'completed', 'failed')),
+  error_message text,
+  error_details text,
   picture_lifecycle text default 'pending'
     check (picture_lifecycle in ('pending', 'generating', 'active', 'expiring', 'expired')),
   picture_expires_at timestamptz,
@@ -38,13 +37,55 @@ create table if not exists public.generations (
   created_at timestamptz not null default now()
 );
 
+alter table public.generations
+  add column if not exists generation_code text;
+
+update public.generations
+   set generation_code = concat(
+     'gen_',
+     (extract(epoch from created_at) * 1000)::bigint,
+     '_',
+     substr(replace(id::text, '-', ''), 1, 6)
+   )
+ where generation_code is null;
+
+create unique index if not exists idx_generations_generation_code
+  on public.generations(generation_code);
+
+alter table public.generations
+  add column if not exists error_message text;
+
+alter table public.generations
+  add column if not exists error_details text;
+
 create table if not exists public.profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   username text not null,
   invite_code text not null unique,
+  concurrency_limit integer not null default 1 check (concurrency_limit >= 1),
   is_disabled boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+alter table public.profiles
+  add column if not exists concurrency_limit integer not null default 1;
+
+do $$
+begin
+  if exists (
+    select 1
+      from pg_constraint
+     where conname = 'profiles_concurrency_limit_check'
+  ) then
+    alter table public.profiles
+      drop constraint profiles_concurrency_limit_check;
+  end if;
+end;
+$$;
+
+alter table public.profiles
+  add constraint profiles_concurrency_limit_check
+  check (concurrency_limit >= 1);
 
 create table if not exists public.admin_roles (
   user_id uuid primary key references auth.users(id) on delete cascade,

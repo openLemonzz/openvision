@@ -36,6 +36,7 @@ function asyncHandler(
 function mapGenerationRow(row: Record<string, unknown>) {
   return {
     id: String(row.id),
+    generationCode: (row.generation_code as string | null) ?? null,
     pictureId: (row.picture_id as string | null) ?? null,
     prompt: String(row.prompt),
     aspectRatio: row.aspect_ratio as '1:1' | '16:9' | '3:4' | '9:16',
@@ -48,6 +49,18 @@ function mapGenerationRow(row: Record<string, unknown>) {
     status: row.status as 'pending' | 'generating' | 'completed' | 'failed',
     isFavorite: Boolean(row.is_favorite),
     userId: String(row.user_id),
+  };
+}
+
+function generateBusinessCode(prefix: 'gen' | 'img') {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function mapAdminGenerationRow(row: Record<string, unknown>) {
+  return {
+    ...mapGenerationRow(row),
+    errorMessage: (row.error_message as string | null) ?? null,
+    errorDetails: (row.error_details as string | null) ?? null,
   };
 }
 
@@ -82,6 +95,38 @@ function normalizePublicWebUrl(value: unknown) {
   }
 
   return parsedUrl.origin;
+}
+
+function normalizeConcurrencyLimit(value: unknown) {
+  if (!Number.isInteger(value) || Number(value) < 1) {
+    throw new Error('concurrencyLimit must be an integer >= 1');
+  }
+
+  return Number(value);
+}
+
+function truncateDiagnosticText(value: unknown, maxLength = 4000) {
+  const rawValue =
+    typeof value === 'string'
+      ? value
+      : value == null
+      ? null
+      : String(value);
+
+  if (rawValue == null) {
+    return null;
+  }
+
+  const trimmedValue = rawValue.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  if (trimmedValue.length <= maxLength) {
+    return trimmedValue;
+  }
+
+  return `${trimmedValue.slice(0, maxLength)}…`;
 }
 
 export function createApp({
@@ -171,16 +216,67 @@ export function createApp({
     return rows[0] ?? null;
   }
 
-  async function markGenerationFailed(id: string, userId: string) {
+  async function loadUserGenerationProfile(userId: string) {
+    if (!query) {
+      return {
+        isDisabled: false,
+        concurrencyLimit: 1,
+      };
+    }
+
+    const { rows: profileRows } = await query(
+      `select is_disabled, coalesce(concurrency_limit, 1)::int as concurrency_limit
+         from public.profiles
+        where user_id = $1
+        limit 1`,
+      [userId]
+    );
+
+    const isDisabled = Boolean(profileRows[0]?.is_disabled);
+    const concurrencyLimit = Number(profileRows[0]?.concurrency_limit ?? 1);
+
+    return { isDisabled, concurrencyLimit };
+  }
+
+  async function countUserActiveGenerations(userId: string) {
+    if (!query) {
+      return 0;
+    }
+
+    const { rows: activeGenerationRows } = await query(
+      `select count(*)::int as active_generation_count
+         from public.generations
+        where user_id = $1
+          and status in ('pending', 'generating')`,
+      [userId]
+    );
+
+    return Number(activeGenerationRows[0]?.active_generation_count ?? 0);
+  }
+
+  async function markGenerationFailed(
+    id: string,
+    userId: string,
+    errorMessage: string,
+    errorDetails?: string | null,
+  ) {
     if (!query) {
       return;
     }
 
     await query(
       `update public.generations
-          set status = 'failed', picture_lifecycle = 'expired'
+          set status = 'failed',
+              picture_lifecycle = 'expired',
+              error_message = $3,
+              error_details = $4
         where id = $1 and user_id = $2`,
-      [id, userId]
+      [
+        id,
+        userId,
+        truncateDiagnosticText(errorMessage, 300) ?? 'Generation failed',
+        truncateDiagnosticText(errorDetails),
+      ]
     );
   }
 
@@ -197,6 +293,7 @@ export function createApp({
          p.invite_code,
          coalesce(ref.invite_count, 0)::int as invite_count,
          coalesce(p.is_disabled, false) as is_disabled,
+         coalesce(p.concurrency_limit, 1)::int as concurrency_limit,
          case when ar.user_id is not null then true else false end as is_admin
        from auth.users u
        left join public.profiles p on p.user_id = u.id
@@ -268,6 +365,7 @@ export function createApp({
       inviteCount: Number(row.invite_count ?? 0),
       isDisabled: Boolean(row.is_disabled),
       isAdmin: Boolean(row.is_admin),
+      concurrencyLimit: Number(row.concurrency_limit ?? 1),
     });
   }));
 
@@ -286,7 +384,8 @@ export function createApp({
          case when ar.user_id is not null then 'admin' else 'user' end as role,
          to_char(coalesce(p.created_at, u.created_at), 'YYYY-MM-DD') as "createdAt",
          coalesce(gen.generation_count, 0)::int as "generationCount",
-         coalesce(ref.invite_count, 0)::int as "inviteCount"
+         coalesce(ref.invite_count, 0)::int as "inviteCount",
+         coalesce(p.concurrency_limit, 1)::int as "concurrencyLimit"
        from auth.users u
        left join public.profiles p on p.user_id = u.id
        left join public.admin_roles ar on ar.user_id = u.id
@@ -315,6 +414,38 @@ export function createApp({
     );
 
     res.status(204).end();
+  }));
+
+  app.patch('/api/users/:id/settings', requireAdmin, asyncHandler(async (req, res) => {
+    if (!ensureServerRuntime(res)) return;
+
+    try {
+      const concurrencyLimit = normalizeConcurrencyLimit(req.body.concurrencyLimit);
+      const { rows, rowCount } = await query!(
+        `update public.profiles
+            set concurrency_limit = $2
+          where user_id = $1
+        returning user_id, concurrency_limit`,
+        [req.params.id, concurrencyLimit]
+      );
+
+      if (!rowCount) {
+        res.status(404).json({ error: 'User profile not found' });
+        return;
+      }
+
+      res.json({
+        id: String(rows[0].user_id),
+        concurrencyLimit: Number(rows[0].concurrency_limit ?? 1),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'concurrencyLimit must be an integer >= 1') {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+
+      throw error;
+    }
   }));
 
   app.delete('/api/users/:id', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -499,6 +630,26 @@ export function createApp({
     res.json(rows.map(mapGenerationRow));
   }));
 
+  app.get('/api/my/generation-capacity', requireUser, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    if (!ensureServerRuntime(res)) return;
+
+    const profile = await loadUserGenerationProfile(req.authUser!.id);
+    const activeGenerationCount = await countUserActiveGenerations(req.authUser!.id);
+    const reason =
+      profile.isDisabled
+        ? 'user_disabled'
+        : activeGenerationCount >= profile.concurrencyLimit
+        ? 'concurrency_limit_reached'
+        : null;
+
+    res.json({
+      concurrencyLimit: profile.concurrencyLimit,
+      activeGenerationCount,
+      canGenerate: reason === null,
+      reason,
+    });
+  }));
+
   app.patch('/api/my/generations/:id/favorite', requireUser, asyncHandler(async (req: AuthenticatedRequest, res) => {
     if (!ensureServerRuntime(res)) return;
     const nextFavorite = Boolean(req.body.isFavorite);
@@ -545,7 +696,7 @@ export function createApp({
         limit 200`
     );
 
-    res.json(rows.map(mapGenerationRow));
+    res.json(rows.map(mapAdminGenerationRow));
   }));
 
   app.delete('/api/generations/:id', requireAdmin, asyncHandler(async (req, res) => {
@@ -567,13 +718,16 @@ export function createApp({
       return;
     }
 
-    const { rows: profileRows } = await query!(
-      'select is_disabled from public.profiles where user_id = $1 limit 1',
-      [userId]
-    );
+    const profile = await loadUserGenerationProfile(userId);
 
-    if (profileRows[0]?.is_disabled) {
+    if (profile.isDisabled) {
       res.status(403).json({ error: 'User is disabled' });
+      return;
+    }
+
+    const activeGenerationCount = await countUserActiveGenerations(userId);
+    if (activeGenerationCount >= profile.concurrencyLimit) {
+      res.status(409).json({ error: 'Concurrency limit reached' });
       return;
     }
 
@@ -588,16 +742,19 @@ export function createApp({
       return;
     }
 
-    const { rows: inserted } = await query!(
-      `insert into public.generations
-         (user_id, prompt, aspect_ratio, style_strength, engine, status, picture_lifecycle)
+      const generationCode = generateBusinessCode('gen');
+
+      const { rows: inserted } = await query!(
+        `insert into public.generations
+         (user_id, prompt, aspect_ratio, style_strength, engine, generation_code, status, picture_lifecycle)
        values
-         ($1, $2, $3, $4, $5, 'pending', 'pending')
-       returning id`,
-      [userId, prompt, aspectRatio, styleStrength, modelId]
-    );
+         ($1, $2, $3, $4, $5, $6, 'pending', 'pending')
+       returning id, generation_code`,
+      [userId, prompt, aspectRatio, styleStrength, modelId, generationCode]
+      );
 
     const generationId = inserted[0].id as string;
+    const persistedGenerationCode = String(inserted[0].generation_code ?? generationCode);
 
     try {
       await query!(
@@ -645,8 +802,13 @@ export function createApp({
       });
 
       if (!apiResponse.ok) {
-        await markGenerationFailed(generationId, userId);
-        res.status(502).json({ error: `Upstream failed: ${apiResponse.status}` });
+        const errorMessage = `Upstream failed: ${apiResponse.status}`;
+        const responseBody = truncateDiagnosticText(await apiResponse.text());
+        const errorDetails = responseBody
+          ? `Upstream failed with status ${apiResponse.status}: ${responseBody}`
+          : `Upstream failed with status ${apiResponse.status}`;
+        await markGenerationFailed(generationId, userId, errorMessage, errorDetails);
+        res.status(502).json({ error: errorMessage });
         return;
       }
 
@@ -674,7 +836,15 @@ export function createApp({
       if (imageUrl && !imageBuffer) {
         const imageResponse = await fetchImpl(resolveRelativeUrl(String(model.api_endpoint), imageUrl));
         if (!imageResponse.ok) {
-          await markGenerationFailed(generationId, userId);
+          const responseBody = truncateDiagnosticText(await imageResponse.text());
+          await markGenerationFailed(
+            generationId,
+            userId,
+            'Failed to download generated image',
+            responseBody
+              ? `Generated image download failed with status ${imageResponse.status}: ${responseBody}`
+              : `Generated image download failed with status ${imageResponse.status}`
+          );
           res.status(502).json({ error: 'Failed to download generated image' });
           return;
         }
@@ -682,19 +852,26 @@ export function createApp({
       }
 
       if (!imageBuffer) {
-        await markGenerationFailed(generationId, userId);
+        await markGenerationFailed(
+          generationId,
+          userId,
+          'No image returned from provider',
+          'Provider response did not contain an image URL or base64 payload'
+        );
         res.status(502).json({ error: 'No image returned from provider' });
         return;
       }
 
       const storageClient = await getStorageClient();
       if (!storageClient) {
-        await markGenerationFailed(generationId, userId);
-        res.status(503).json({ error: `Missing server config: ${missingConfig.join(', ')}` });
+        const errorMessage = 'Storage client unavailable';
+        const errorDetails = `Missing server config: ${missingConfig.join(', ')}`;
+        await markGenerationFailed(generationId, userId, errorMessage, errorDetails);
+        res.status(503).json({ error: errorDetails });
         return;
       }
 
-      const pictureId = `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const pictureId = generateBusinessCode('img');
       const filePath = `${userId}/${pictureId}.png`;
       const { error: uploadError } = await storageClient!.storage
         .from('images')
@@ -704,7 +881,12 @@ export function createApp({
         });
 
       if (uploadError) {
-        await markGenerationFailed(generationId, userId);
+        await markGenerationFailed(
+          generationId,
+          userId,
+          'Failed to upload image',
+          `Storage upload failed: ${truncateDiagnosticText(uploadError) ?? 'unknown error'}`
+        );
         res.status(500).json({ error: 'Failed to upload image' });
         return;
       }
@@ -724,10 +906,10 @@ export function createApp({
         [generationId, userId, urlData.publicUrl, pictureId, expiresAt.toISOString()]
       );
 
-      res.json({ id: generationId });
+      res.json({ id: generationId, generationCode: persistedGenerationCode });
     } catch (error) {
-      await markGenerationFailed(generationId, userId);
       const message = error instanceof Error ? error.message : String(error);
+      await markGenerationFailed(generationId, userId, 'Generation pipeline crashed', message);
       res.status(500).json({ error: message });
     }
   }));
