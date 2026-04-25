@@ -42,6 +42,31 @@ export type GenerationProgressStage = {
   state: 'pending' | 'complete' | 'failed';
 };
 
+export function buildGenerateRequestPayload(args: {
+  prompt: string;
+  modelId: string;
+  aspectRatio: string;
+  styleStrength: number;
+  referenceImageUrl?: string | null;
+}) {
+  const payload = {
+    prompt: args.prompt,
+    modelId: args.modelId,
+    aspectRatio: args.aspectRatio,
+    styleStrength: args.styleStrength,
+  };
+  const referenceImageUrl = args.referenceImageUrl?.trim();
+
+  if (!referenceImageUrl) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    referenceImageUrl,
+  };
+}
+
 export function countActiveGenerations(records: ActiveGenerationRecord[]) {
   return records.filter((record) => record.status === 'pending' || record.status === 'generating').length;
 }

@@ -33,7 +33,13 @@ interface HomeProps {
   } | null;
   onConsumeEditDraft: () => void;
   lifecycleTick: number;
-  onGenerate: (prompt: string, aspectRatio: '1:1' | '16:9' | '3:4' | '9:16', styleStrength: number, engine: string) => Promise<string>;
+  onGenerate: (
+    prompt: string,
+    aspectRatio: '1:1' | '16:9' | '3:4' | '9:16',
+    styleStrength: number,
+    engine: string,
+    referenceImageUrl?: string | null,
+  ) => Promise<string>;
   onRequireAuth: () => void;
   onDeleteRecord: (id: string) => void;
   onToggleFavoriteRecord: (id: string) => void;
@@ -74,8 +80,14 @@ export default function Home({
   );
 
   const handleGenerate = useCallback(
-    (prompt: string, aspectRatio: '1:1' | '16:9' | '3:4' | '9:16', styleStrength: number, engine: string) => {
-      return onGenerate(prompt, aspectRatio, styleStrength, engine);
+    (
+      prompt: string,
+      aspectRatio: '1:1' | '16:9' | '3:4' | '9:16',
+      styleStrength: number,
+      engine: string,
+      referenceImageUrl?: string | null,
+    ) => {
+      return onGenerate(prompt, aspectRatio, styleStrength, engine, referenceImageUrl);
     },
     [onGenerate]
   );

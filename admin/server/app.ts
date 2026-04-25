@@ -23,6 +23,10 @@ export interface ServerDependencies {
   port?: number;
   configCryptKey?: string;
   missingConfig?: string[];
+  generationRequestTimeoutMs?: number;
+  imageDownloadTimeoutMs?: number;
+  imageDownloadRetryCount?: number;
+  imageDownloadRetryBaseDelayMs?: number;
 }
 
 function asyncHandler(
@@ -71,6 +75,131 @@ function resolveRelativeUrl(baseUrl: string, maybeRelative: string) {
 
   const base = baseUrl.replace(/\/v1\/.*$/, '').replace(/\/+$/, '');
   return `${base}${maybeRelative.startsWith('/') ? '' : '/'}${maybeRelative}`;
+}
+
+function resolveImageEditApiEndpoint(apiEndpoint: string) {
+  try {
+    const parsedUrl = new URL(apiEndpoint);
+    if (parsedUrl.pathname.endsWith('/images/generations')) {
+      parsedUrl.pathname = parsedUrl.pathname.replace(/\/images\/generations$/, '/images/edits');
+      return parsedUrl.toString();
+    }
+  } catch {
+    // Fall through to string replacement fallback.
+  }
+
+  return apiEndpoint.replace(/\/images\/generations(?=\/?$)/, '/images/edits');
+}
+
+function resolveGenerationSize(aspectRatio: string) {
+  const sizeMap: Record<string, string> = {
+    '1:1': '1024x1024',
+    '16:9': '1024x576',
+    '3:4': '768x1024',
+    '9:16': '576x1024',
+  };
+
+  return sizeMap[aspectRatio] || '1024x1024';
+}
+
+function resolveEditSize(aspectRatio: string) {
+  const sizeMap: Record<string, string> = {
+    '1:1': '1024x1024',
+    '16:9': '1536x1024',
+    '3:4': '1024x1536',
+    '9:16': '1024x1536',
+  };
+
+  return sizeMap[aspectRatio] || '1024x1024';
+}
+
+function sharesOrigin(baseUrl: string, candidateUrl: string) {
+  try {
+    return new URL(candidateUrl, baseUrl).origin === new URL(baseUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+function isRetryableHttpStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function isRetryableFetchError(error: unknown) {
+  return isAbortError(error) || error instanceof TypeError;
+}
+
+function sleep(ms: number) {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function fetchWithTimeout(
+  fetchImpl: typeof fetch,
+  input: string,
+  init: RequestInit,
+  timeoutMs: number,
+) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return fetchImpl(input, init);
+  }
+
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetchImpl(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+async function fetchWithRetry(
+  fetchImpl: typeof fetch,
+  input: string,
+  init: RequestInit,
+  timeoutMs: number,
+  retryCount: number,
+  baseDelayMs: number,
+) {
+  let attempt = 0;
+
+  while (true) {
+    try {
+      const response = await fetchWithTimeout(fetchImpl, input, init, timeoutMs);
+
+      if (attempt >= retryCount || !isRetryableHttpStatus(response.status)) {
+        return response;
+      }
+
+      try {
+        await response.arrayBuffer();
+      } catch {
+        // Ignore body consumption errors for throwaway retry responses.
+      }
+    } catch (error) {
+      if (attempt >= retryCount || !isRetryableFetchError(error)) {
+        throw error;
+      }
+    }
+
+    await sleep(baseDelayMs * (2 ** attempt));
+    attempt += 1;
+  }
 }
 
 function normalizePublicWebUrl(value: unknown) {
@@ -138,6 +267,10 @@ export function createApp({
   port = config.port,
   configCryptKey = config.configCryptKey,
   missingConfig = [],
+  generationRequestTimeoutMs = 45000,
+  imageDownloadTimeoutMs = 15000,
+  imageDownloadRetryCount = 1,
+  imageDownloadRetryBaseDelayMs = 250,
 }: ServerDependencies = {}) {
   const app = express();
   const requireUser = createRequireUser(resolveAuthUser);
@@ -711,6 +844,10 @@ export function createApp({
     const modelId = String(req.body.modelId || req.body.engine || '');
     const aspectRatio = String(req.body.aspectRatio || '1:1');
     const styleStrength = Number(req.body.styleStrength || 75);
+    const referenceImageUrl =
+      typeof req.body.referenceImageUrl === 'string' && req.body.referenceImageUrl.trim()
+        ? req.body.referenceImageUrl.trim()
+        : null;
     const userId = req.authUser!.id;
 
     if (!prompt) {
@@ -742,6 +879,11 @@ export function createApp({
       return;
     }
 
+    if (referenceImageUrl && model.protocol === 'stability') {
+      res.status(400).json({ error: 'Selected model does not support reference image edits' });
+      return;
+    }
+
       const generationCode = generateBusinessCode('gen');
 
       const { rows: inserted } = await query!(
@@ -764,17 +906,18 @@ export function createApp({
         [generationId, userId]
       );
 
-      const sizeMap: Record<string, string> = {
-        '1:1': '1024x1024',
-        '16:9': '1024x576',
-        '3:4': '768x1024',
-        '9:16': '576x1024',
-      };
-
       const requestBody =
-        model.protocol === 'stability'
+        referenceImageUrl
+          ? {
+              model: model.id,
+              prompt,
+              n: 1,
+              size: resolveEditSize(aspectRatio),
+              images: [{ image_url: referenceImageUrl }],
+            }
+          : model.protocol === 'stability'
           ? (() => {
-              const [width, height] = (sizeMap[aspectRatio] || '1024x1024').split('x').map(Number);
+              const [width, height] = resolveGenerationSize(aspectRatio).split('x').map(Number);
               return {
                 text_prompts: [{ text: prompt, weight: 1 }],
                 cfg_scale: 7,
@@ -788,18 +931,39 @@ export function createApp({
               model: model.id,
               prompt,
               n: 1,
-              size: sizeMap[aspectRatio] || '1024x1024',
+              size: resolveGenerationSize(aspectRatio),
             };
 
       const apiKey = decryptSecret(String(model.api_key_ciphertext), configCryptKey);
-      const apiResponse = await fetchImpl(String(model.api_endpoint), {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-      });
+      let apiResponse: globalThis.Response;
+
+      try {
+        apiResponse = await fetchWithTimeout(
+          fetchImpl,
+          referenceImageUrl
+            ? resolveImageEditApiEndpoint(String(model.api_endpoint))
+            : String(model.api_endpoint),
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestBody),
+          },
+          generationRequestTimeoutMs,
+        );
+      } catch (error) {
+        if (isAbortError(error)) {
+          const errorMessage = 'Upstream request timed out';
+          const errorDetails = `Upstream request to provider timed out after ${generationRequestTimeoutMs}ms`;
+          await markGenerationFailed(generationId, userId, errorMessage, errorDetails);
+          res.status(504).json({ error: errorMessage });
+          return;
+        }
+
+        throw error;
+      }
 
       if (!apiResponse.ok) {
         const errorMessage = `Upstream failed: ${apiResponse.status}`;
@@ -834,7 +998,36 @@ export function createApp({
       }
 
       if (imageUrl && !imageBuffer) {
-        const imageResponse = await fetchImpl(resolveRelativeUrl(String(model.api_endpoint), imageUrl));
+        const resolvedImageUrl = resolveRelativeUrl(String(model.api_endpoint), imageUrl);
+        let imageResponse: globalThis.Response;
+
+        try {
+          imageResponse = await fetchWithRetry(
+            fetchImpl,
+            resolvedImageUrl,
+            sharesOrigin(String(model.api_endpoint), resolvedImageUrl)
+              ? {
+                  headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                  },
+                }
+              : {},
+            imageDownloadTimeoutMs,
+            imageDownloadRetryCount,
+            imageDownloadRetryBaseDelayMs,
+          );
+        } catch (error) {
+          if (isAbortError(error)) {
+            const errorMessage = 'Generated image download timed out';
+            const errorDetails = `Generated image download timed out after ${imageDownloadTimeoutMs}ms`;
+            await markGenerationFailed(generationId, userId, errorMessage, errorDetails);
+            res.status(504).json({ error: errorMessage });
+            return;
+          }
+
+          throw error;
+        }
+
         if (!imageResponse.ok) {
           const responseBody = truncateDiagnosticText(await imageResponse.text());
           await markGenerationFailed(

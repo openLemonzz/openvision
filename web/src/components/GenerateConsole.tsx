@@ -28,7 +28,13 @@ interface GenerateConsoleProps {
   draftAspectRatio?: AspectRatio | null;
   draftStyleStrength?: number | null;
   draftEngine?: string | null;
-  onGenerate: (prompt: string, aspectRatio: AspectRatio, styleStrength: number, engine: string) => Promise<string>;
+  onGenerate: (
+    prompt: string,
+    aspectRatio: AspectRatio,
+    styleStrength: number,
+    engine: string,
+    referenceImageUrl?: string | null,
+  ) => Promise<string>;
   onRequireAuth: () => void;
   onClearReferenceImage: () => void;
 }
@@ -105,11 +111,17 @@ export default function GenerateConsole({
       onRequireAuth();
       return;
     }
-    const generationId = await onGenerate(prompt.trim(), aspectRatio, styleStrength, engine);
+    const generationId = await onGenerate(
+      prompt.trim(),
+      aspectRatio,
+      styleStrength,
+      engine,
+      referenceImageUrl,
+    );
     if (generationId) {
       setPrompt('');
     }
-  }, [prompt, aspectRatio, styleStrength, engine, isLoggedIn, onGenerate, onRequireAuth]);
+  }, [prompt, aspectRatio, styleStrength, engine, isLoggedIn, onGenerate, onRequireAuth, referenceImageUrl]);
 
   const buttonLabel = useMemo(() => {
     if (modelsLoading) return '加载模型...';

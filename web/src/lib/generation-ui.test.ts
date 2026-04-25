@@ -294,3 +294,48 @@ test('resolveGenerationRecordProgressPhase maps record status into the five-stag
   assert.equal(resolveGenerationRecordProgressPhase?.(record('gen-3', 'completed')), 'completed');
   assert.equal(resolveGenerationRecordProgressPhase?.(record('gen-4', 'failed')), 'failed');
 });
+
+test('buildGenerateRequestPayload includes the reference image only when edit mode is active', () => {
+  const { buildGenerateRequestPayload } = utils as {
+    buildGenerateRequestPayload?: (args: {
+      prompt: string;
+      modelId: string;
+      aspectRatio: string;
+      styleStrength: number;
+      referenceImageUrl?: string | null;
+    }) => Record<string, unknown>;
+  };
+
+  assert.equal(typeof buildGenerateRequestPayload, 'function');
+  assert.deepEqual(
+    buildGenerateRequestPayload?.({
+      prompt: 'edit this',
+      modelId: 'gpt-image-2',
+      aspectRatio: '1:1',
+      styleStrength: 60,
+      referenceImageUrl: 'https://cdn.example.com/reference.png',
+    }),
+    {
+      prompt: 'edit this',
+      modelId: 'gpt-image-2',
+      aspectRatio: '1:1',
+      styleStrength: 60,
+      referenceImageUrl: 'https://cdn.example.com/reference.png',
+    }
+  );
+  assert.deepEqual(
+    buildGenerateRequestPayload?.({
+      prompt: 'normal generate',
+      modelId: 'gpt-image-2',
+      aspectRatio: '16:9',
+      styleStrength: 75,
+      referenceImageUrl: '   ',
+    }),
+    {
+      prompt: 'normal generate',
+      modelId: 'gpt-image-2',
+      aspectRatio: '16:9',
+      styleStrength: 75,
+    }
+  );
+});

@@ -14,5 +14,7 @@ services:
       target: admin
     env_file:
       - ./admin/.env
+    environment:
+      NODE_OPTIONS: --dns-result-order=ipv4first
     ports:
       - "9902:9902"

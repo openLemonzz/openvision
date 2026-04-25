@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { adminFetch } from '@/lib/admin-api';
 import {
+  buildGenerateRequestPayload,
   countActiveGenerations,
   type GenerationCapacitySnapshot,
 } from '@/lib/utils';
@@ -216,7 +217,8 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     prompt: string,
     aspectRatio: AspectRatio,
     styleStrength: number,
-    engine: string
+    engine: string,
+    referenceImageUrl?: string | null,
   ) => {
     if (!userId) {
       console.warn('[FE] Generate skipped: userId=', userId);
@@ -272,12 +274,13 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
         '/generate',
         {
           method: 'POST',
-          body: JSON.stringify({
+          body: JSON.stringify(buildGenerateRequestPayload({
             prompt: prompt.trim(),
             modelId: modelConfig.id,
             aspectRatio,
             styleStrength,
-          }),
+            referenceImageUrl,
+          })),
         },
         accessToken
       );

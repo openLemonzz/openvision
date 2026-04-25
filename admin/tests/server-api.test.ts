@@ -725,6 +725,204 @@ test('POST /api/generate creates and returns a business generation code while ke
   assert.match(String(insertedGenerationCode), /^gen_\d{13}_[a-z0-9]{6}$/);
 });
 
+test('POST /api/generate switches to image-edit mode when a reference image is provided', async () => {
+  const configCryptKey = '1234567890abcdef1234567890abcdef';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+  let upstreamRequestBody: Record<string, unknown> | null = null;
+
+  const dependencies: ServerDependencies = {
+    configCryptKey,
+    resolveAuthUser: async () => ({ id: 'edit-user', email: 'edit@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select is_disabled') && sql.includes('concurrency_limit')) {
+        assert.deepEqual(params, ['edit-user']);
+        return {
+          rows: [{ is_disabled: false, concurrency_limit: 1 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('count(*)::int as active_generation_count')) {
+        assert.deepEqual(params, ['edit-user']);
+        return {
+          rows: [{ active_generation_count: 0 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('from public.model_configs')) {
+        assert.deepEqual(params, ['gpt-image-2']);
+        return {
+          rows: [{
+            id: 'gpt-image-2',
+            enabled: true,
+            protocol: 'openai',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('insert into public.generations')) {
+        return {
+          rows: [{ id: 'gen-edit-1' }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('set status = \'generating\'')) {
+        assert.deepEqual(params, ['gen-edit-1', 'edit-user']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'completed\'')) {
+        assert.deepEqual(params?.slice(0, 2), ['gen-edit-1', 'edit-user']);
+        assert.match(String(params?.[2]), /^https:\/\/cdn\.example\.com\/edit-user\/img_\d{13}_[a-z0-9]{6}\.png$/);
+        assert.match(String(params?.[3]), /^img_\d{13}_[a-z0-9]{6}$/);
+        assert.match(String(params?.[4]), /^\d{4}-\d{2}-\d{2}T/);
+        return { rows: [], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async (input, init) => {
+      assert.equal(input, 'https://provider.example.com/v1/images/edits');
+      upstreamRequestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        data: [{ b64_json: Buffer.from('png-binary').toString('base64') }],
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    },
+    getStorageClient: async () => ({
+      storage: {
+        from: (bucket: string) => {
+          assert.equal(bucket, 'images');
+          return {
+            upload: async (filePath: string, body: Uint8Array, options: { contentType: string; upsert: boolean }) => {
+              assert.match(filePath, /^edit-user\/img_\d{13}_[a-z0-9]{6}\.png$/);
+              assert.equal(body instanceof Uint8Array, true);
+              assert.deepEqual(options, {
+                contentType: 'image/png',
+                upsert: true,
+              });
+              return { error: null };
+            },
+            getPublicUrl: (filePath: string) => ({
+              data: {
+                publicUrl: `https://cdn.example.com/${filePath}`,
+              },
+            }),
+          };
+        },
+      },
+    }) as Awaited<ReturnType<NonNullable<ServerDependencies['getStorageClient']>>>,
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer user-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'edit this image',
+        modelId: 'gpt-image-2',
+        aspectRatio: '9:16',
+        styleStrength: 75,
+        referenceImageUrl: 'https://cdn.example.com/reference.png',
+      }),
+    });
+
+    assert.equal(response.status, 200);
+  });
+
+  assert.deepEqual(upstreamRequestBody, {
+    model: 'gpt-image-2',
+    prompt: 'edit this image',
+    n: 1,
+    size: '1024x1536',
+    images: [{ image_url: 'https://cdn.example.com/reference.png' }],
+  });
+});
+
+test('POST /api/generate rejects edit mode for protocols without implemented reference-image support', async () => {
+  const configCryptKey = 'abcdefabcdefabcdefabcdefabcdefab';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+  let fetchCalled = false;
+
+  const dependencies: ServerDependencies = {
+    configCryptKey,
+    resolveAuthUser: async () => ({ id: 'stability-user', email: 'stability@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select is_disabled') && sql.includes('concurrency_limit')) {
+        assert.deepEqual(params, ['stability-user']);
+        return {
+          rows: [{ is_disabled: false, concurrency_limit: 1 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('count(*)::int as active_generation_count')) {
+        assert.deepEqual(params, ['stability-user']);
+        return {
+          rows: [{ active_generation_count: 0 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('from public.model_configs')) {
+        assert.deepEqual(params, ['sdxl']);
+        return {
+          rows: [{
+            id: 'sdxl',
+            enabled: true,
+            protocol: 'stability',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+          }],
+          rowCount: 1,
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async () => {
+      fetchCalled = true;
+      throw new Error('fetch should not be called');
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer user-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'edit this image',
+        modelId: 'sdxl',
+        aspectRatio: '1:1',
+        styleStrength: 75,
+        referenceImageUrl: 'https://cdn.example.com/reference.png',
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: 'Selected model does not support reference image edits',
+    });
+  });
+
+  assert.equal(fetchCalled, false);
+});
+
 test('POST /api/generate stores upstream failure diagnostics on non-2xx responses', async () => {
   const configCryptKey = '0123456789abcdef0123456789abcdef';
   const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
@@ -916,6 +1114,496 @@ test('POST /api/generate stores diagnostics when the provider response has no im
     'No image returned from provider',
     'Provider response did not contain an image URL or base64 payload',
   ]);
+});
+
+test('POST /api/generate times out slow upstream requests and stores timeout diagnostics', async () => {
+  const configCryptKey = '00112233445566778899aabbccddeeff';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+  let failedUpdateParams: unknown[] | undefined;
+
+  const dependencies = {
+    configCryptKey,
+    generationRequestTimeoutMs: 5,
+    resolveAuthUser: async () => ({ id: 'timeout-user', email: 'timeout@example.com' }),
+    query: async (sql: string, params: unknown[] | undefined) => {
+      if (sql.includes('select is_disabled') && sql.includes('concurrency_limit')) {
+        assert.deepEqual(params, ['timeout-user']);
+        return {
+          rows: [{ is_disabled: false, concurrency_limit: 1 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('count(*)::int as active_generation_count')) {
+        assert.deepEqual(params, ['timeout-user']);
+        return {
+          rows: [{ active_generation_count: 0 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('from public.model_configs')) {
+        assert.deepEqual(params, ['flux-1']);
+        return {
+          rows: [{
+            id: 'flux-1',
+            enabled: true,
+            protocol: 'openai',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('insert into public.generations')) {
+        return {
+          rows: [{ id: 'gen-timeout-1' }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('set status = \'generating\'')) {
+        assert.deepEqual(params, ['gen-timeout-1', 'timeout-user']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'failed\'')) {
+        failedUpdateParams = params;
+        assert.deepEqual(params, [
+          'gen-timeout-1',
+          'timeout-user',
+          'Upstream request timed out',
+          'Upstream request to provider timed out after 5ms',
+        ]);
+        return { rows: [], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async (_input: string | URL | Request, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (!signal) {
+        throw new Error('missing abort signal');
+      }
+
+      return await new Promise<Response>((_resolve, reject) => {
+        if (signal.aborted) {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+          return;
+        }
+
+        signal.addEventListener('abort', () => {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+        }, { once: true });
+      });
+    },
+  } as ServerDependencies;
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer user-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'slow prompt',
+        modelId: 'flux-1',
+        aspectRatio: '1:1',
+        styleStrength: 75,
+      }),
+    });
+
+    assert.equal(response.status, 504);
+    assert.deepEqual(await response.json(), { error: 'Upstream request timed out' });
+  });
+
+  assert.deepEqual(failedUpdateParams, [
+    'gen-timeout-1',
+    'timeout-user',
+    'Upstream request timed out',
+    'Upstream request to provider timed out after 5ms',
+  ]);
+});
+
+test('POST /api/generate reuses provider auth for same-origin image downloads', async () => {
+  const configCryptKey = '11223344556677889900aabbccddeeff';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+  const seenFetchCalls: Array<{ input: string | URL | Request; init?: RequestInit }> = [];
+
+  const dependencies: ServerDependencies = {
+    configCryptKey,
+    resolveAuthUser: async () => ({ id: 'user-4', email: 'user4@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select is_disabled') && sql.includes('concurrency_limit')) {
+        assert.deepEqual(params, ['user-4']);
+        return {
+          rows: [{ is_disabled: false, concurrency_limit: 1 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('count(*)::int as active_generation_count')) {
+        assert.deepEqual(params, ['user-4']);
+        return {
+          rows: [{ active_generation_count: 0 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('from public.model_configs')) {
+        assert.deepEqual(params, ['flux-1']);
+        return {
+          rows: [{
+            id: 'flux-1',
+            enabled: true,
+            protocol: 'openai',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('insert into public.generations')) {
+        return {
+          rows: [{ id: 'gen-download-auth-1' }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('set status = \'generating\'')) {
+        assert.deepEqual(params, ['gen-download-auth-1', 'user-4']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'completed\'')) {
+        assert.deepEqual(params?.slice(0, 2), ['gen-download-auth-1', 'user-4']);
+        assert.match(String(params?.[2]), /^https:\/\/cdn\.example\.com\/user-4\/img_\d{13}_[a-z0-9]{6}\.png$/);
+        assert.match(String(params?.[3]), /^img_\d{13}_[a-z0-9]{6}$/);
+        assert.match(String(params?.[4]), /^\d{4}-\d{2}-\d{2}T/);
+        return { rows: [], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async (input, init) => {
+      seenFetchCalls.push({ input, init });
+
+      if (input === 'https://provider.example.com/v1/images/generations') {
+        return new Response(JSON.stringify({
+          data: [{ url: '/v1/files/generated-image.png' }],
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      }
+
+      if (input === 'https://provider.example.com/v1/files/generated-image.png') {
+        const headers = new Headers(init?.headers);
+        assert.equal(headers.get('Authorization'), 'Bearer provider-key');
+        return new Response(Buffer.from('png-binary'), { status: 200 });
+      }
+
+      throw new Error(`Unexpected fetch input: ${String(input)}`);
+    },
+    getStorageClient: async () => ({
+      storage: {
+        from: (bucket: string) => {
+          assert.equal(bucket, 'images');
+          return {
+            upload: async (filePath: string, body: Uint8Array, options: { contentType: string; upsert: boolean }) => {
+              assert.match(filePath, /^user-4\/img_\d{13}_[a-z0-9]{6}\.png$/);
+              assert.equal(body instanceof Uint8Array, true);
+              assert.deepEqual(options, {
+                contentType: 'image/png',
+                upsert: true,
+              });
+              return { error: null };
+            },
+            getPublicUrl: (filePath: string) => {
+              assert.match(filePath, /^user-4\/img_\d{13}_[a-z0-9]{6}\.png$/);
+              return {
+                data: {
+                  publicUrl: `https://cdn.example.com/${filePath}`,
+                },
+              };
+            },
+          };
+        },
+      },
+    }) as Awaited<ReturnType<NonNullable<ServerDependencies['getStorageClient']>>>,
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer user-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'same origin image',
+        modelId: 'flux-1',
+        aspectRatio: '1:1',
+        styleStrength: 75,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(seenFetchCalls.length, 2);
+    assert.equal(seenFetchCalls[1]?.input, 'https://provider.example.com/v1/files/generated-image.png');
+  });
+});
+
+test('POST /api/generate retries a retryable generated-image download failure before succeeding', async () => {
+  const configCryptKey = '5566778899aabbccddeeff0011223344';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+  let downloadAttempts = 0;
+  let failedUpdateCalled = false;
+
+  const dependencies: ServerDependencies = {
+    configCryptKey,
+    imageDownloadRetryCount: 1,
+    imageDownloadRetryBaseDelayMs: 0,
+    resolveAuthUser: async () => ({ id: 'retry-download-user', email: 'retry@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select is_disabled') && sql.includes('concurrency_limit')) {
+        assert.deepEqual(params, ['retry-download-user']);
+        return {
+          rows: [{ is_disabled: false, concurrency_limit: 1 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('count(*)::int as active_generation_count')) {
+        assert.deepEqual(params, ['retry-download-user']);
+        return {
+          rows: [{ active_generation_count: 0 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('from public.model_configs')) {
+        assert.deepEqual(params, ['flux-1']);
+        return {
+          rows: [{
+            id: 'flux-1',
+            enabled: true,
+            protocol: 'openai',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('insert into public.generations')) {
+        return {
+          rows: [{ id: 'gen-download-retry-1' }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('set status = \'generating\'')) {
+        assert.deepEqual(params, ['gen-download-retry-1', 'retry-download-user']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'completed\'')) {
+        assert.deepEqual(params?.slice(0, 2), ['gen-download-retry-1', 'retry-download-user']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'failed\'')) {
+        failedUpdateCalled = true;
+        throw new Error('generation should not be marked failed after a successful retry');
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async (input) => {
+      if (input === 'https://provider.example.com/v1/images/generations') {
+        return new Response(JSON.stringify({
+          data: [{ url: '/v1/files/retry-image.png' }],
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      }
+
+      if (input === 'https://provider.example.com/v1/files/retry-image.png') {
+        downloadAttempts += 1;
+        if (downloadAttempts === 1) {
+          return new Response('temporary unavailable', { status: 503 });
+        }
+
+        return new Response(Buffer.from('png-binary'), { status: 200 });
+      }
+
+      throw new Error(`Unexpected fetch input: ${String(input)}`);
+    },
+    getStorageClient: async () => ({
+      storage: {
+        from: () => ({
+          upload: async () => ({ error: null }),
+          getPublicUrl: () => ({
+            data: {
+              publicUrl: 'https://cdn.example.com/retry-download-user/result.png',
+            },
+          }),
+        }),
+      },
+    }) as Awaited<ReturnType<NonNullable<ServerDependencies['getStorageClient']>>>,
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer user-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'retry image download',
+        modelId: 'flux-1',
+        aspectRatio: '1:1',
+        styleStrength: 75,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+  });
+
+  assert.equal(downloadAttempts, 2);
+  assert.equal(failedUpdateCalled, false);
+});
+
+test('POST /api/generate retries a transient generated-image download network error before succeeding', async () => {
+  const configCryptKey = '66778899aabbccddeeff001122334455';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+  let downloadAttempts = 0;
+
+  const dependencies: ServerDependencies = {
+    configCryptKey,
+    imageDownloadRetryCount: 1,
+    imageDownloadRetryBaseDelayMs: 0,
+    resolveAuthUser: async () => ({ id: 'retry-network-user', email: 'retry-network@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select is_disabled') && sql.includes('concurrency_limit')) {
+        assert.deepEqual(params, ['retry-network-user']);
+        return {
+          rows: [{ is_disabled: false, concurrency_limit: 1 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('count(*)::int as active_generation_count')) {
+        assert.deepEqual(params, ['retry-network-user']);
+        return {
+          rows: [{ active_generation_count: 0 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('from public.model_configs')) {
+        assert.deepEqual(params, ['flux-1']);
+        return {
+          rows: [{
+            id: 'flux-1',
+            enabled: true,
+            protocol: 'openai',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('insert into public.generations')) {
+        return {
+          rows: [{ id: 'gen-download-network-retry-1' }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('set status = \'generating\'')) {
+        assert.deepEqual(params, ['gen-download-network-retry-1', 'retry-network-user']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'completed\'')) {
+        assert.deepEqual(params?.slice(0, 2), ['gen-download-network-retry-1', 'retry-network-user']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'failed\'')) {
+        throw new Error('generation should not be marked failed after a successful retry');
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async (input) => {
+      if (input === 'https://provider.example.com/v1/images/generations') {
+        return new Response(JSON.stringify({
+          data: [{ url: '/v1/files/retry-network-image.png' }],
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      }
+
+      if (input === 'https://provider.example.com/v1/files/retry-network-image.png') {
+        downloadAttempts += 1;
+        if (downloadAttempts === 1) {
+          throw new TypeError('fetch failed');
+        }
+
+        return new Response(Buffer.from('png-binary'), { status: 200 });
+      }
+
+      throw new Error(`Unexpected fetch input: ${String(input)}`);
+    },
+    getStorageClient: async () => ({
+      storage: {
+        from: () => ({
+          upload: async () => ({ error: null }),
+          getPublicUrl: () => ({
+            data: {
+              publicUrl: 'https://cdn.example.com/retry-network-user/result.png',
+            },
+          }),
+        }),
+      },
+    }) as Awaited<ReturnType<NonNullable<ServerDependencies['getStorageClient']>>>,
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer user-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'retry network error',
+        modelId: 'flux-1',
+        aspectRatio: '1:1',
+        styleStrength: 75,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+  });
+
+  assert.equal(downloadAttempts, 2);
 });
 
 test('DELETE /api/users/:id deletes another user for admins', async () => {
