@@ -14,6 +14,7 @@ export interface AdminUser {
 
 export interface ModelConfig {
   id: string;
+  requestModelId: string;
   name: string;
   provider: string;
   apiKey: string;
@@ -24,6 +25,13 @@ export interface ModelConfig {
   defaultSize: string;
   protocol: ApiProtocol;
   hasApiKey?: boolean;
+}
+
+export interface ModelTestResult {
+  ok: boolean;
+  status?: number;
+  message: string;
+  details?: string | null;
 }
 
 export interface GenerationRecord {

@@ -11,6 +11,7 @@ const DEFAULT_PROVIDER = 'Custom API';
 export function createEditableModels(models: ModelConfig[]): EditableModelConfig[] {
   return models.map((model) => ({
     ...model,
+    requestModelId: model.requestModelId || model.id,
     draftKey: `existing:${model.id}`,
     isNew: false,
   }));
@@ -29,10 +30,13 @@ export function createModelDraft(models: EditableModelConfig[]): EditableModelCo
     nextModelNumber += 1;
   }
 
+  const nextModelId = `new-model-${nextModelNumber}`;
+
   return {
     draftKey: `draft:${nextDraftNumber}`,
     isNew: true,
-    id: `new-model-${nextModelNumber}`,
+    id: nextModelId,
+    requestModelId: nextModelId,
     name: `新模型 ${nextModelNumber}`,
     provider: DEFAULT_PROVIDER,
     apiKey: '',
@@ -48,24 +52,27 @@ export function createModelDraft(models: EditableModelConfig[]): EditableModelCo
 
 export function validateEditableModels(models: EditableModelConfig[]) {
   const errors: string[] = [];
-  const idCounts = new Map<string, number>();
+  const configIdCounts = new Map<string, number>();
 
   for (const model of models) {
     const id = model.id.trim();
     if (id) {
-      idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
+      configIdCounts.set(id, (configIdCounts.get(id) ?? 0) + 1);
     }
   }
 
-  for (const [id, count] of idCounts.entries()) {
+  for (const [id, count] of configIdCounts.entries()) {
     if (count > 1) {
-      errors.push(`模型“${id}”重复，请使用唯一的请求模型 ID。`);
+      errors.push(`配置 ID“${id}”重复，请使用唯一的配置 ID。`);
     }
   }
 
   models.forEach((model, index) => {
     const row = index + 1;
     if (!model.id.trim()) {
+      errors.push(`模型 #${row} 缺少配置 ID。`);
+    }
+    if (!model.requestModelId.trim()) {
       errors.push(`模型 #${row} 缺少请求模型 ID。`);
     }
     if (!model.name.trim()) {
@@ -83,12 +90,25 @@ export function validateEditableModels(models: EditableModelConfig[]) {
 }
 
 export function toPersistedModels(models: EditableModelConfig[]): ModelConfig[] {
-  return models.map(({ draftKey: _draftKey, isNew: _isNew, ...model }) => ({
-    ...model,
-    id: model.id.trim(),
-    name: model.name.trim(),
-    provider: model.provider.trim(),
-    apiKey: model.apiKey.trim(),
-    apiEndpoint: model.apiEndpoint.trim(),
-  }));
+  return models.map((model) => {
+    const persisted: ModelConfig = {
+      id: model.id.trim(),
+      requestModelId: model.requestModelId.trim(),
+      name: model.name.trim(),
+      provider: model.provider.trim(),
+      apiKey: model.apiKey.trim(),
+      apiEndpoint: model.apiEndpoint.trim(),
+      enabled: model.enabled,
+      maxTokens: model.maxTokens,
+      temperature: model.temperature,
+      defaultSize: model.defaultSize,
+      protocol: model.protocol,
+    };
+
+    if (typeof model.hasApiKey !== 'undefined') {
+      persisted.hasApiKey = model.hasApiKey;
+    }
+
+    return persisted;
+  });
 }

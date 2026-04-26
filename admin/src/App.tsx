@@ -59,7 +59,14 @@ export default function App() {
         />
         <Route
           path="models"
-          element={<AdminModels models={admin.models} onUpdateModels={admin.updateModels} />}
+          element={
+            <AdminModels
+              models={admin.models}
+              onUpdateModels={admin.updateModels}
+              onDeleteModel={admin.deleteModel}
+              onTestModel={admin.testModel}
+            />
+          }
         />
         <Route
           path="settings"

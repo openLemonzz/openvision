@@ -14,6 +14,7 @@ export default function AdminSettings({ settings, onUpdateSettings }: AdminSetti
   const [error, setError] = useState('');
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPublicWebUrl(settings.publicWebUrl ?? '');
   }, [settings.publicWebUrl]);
 

@@ -185,6 +185,293 @@ test('GET /api/public/models returns enabled web-facing model metadata without s
   });
 });
 
+test('GET /api/models returns admin model configs with request model ids', async () => {
+  const dependencies: ServerDependencies = {
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      if (sql.includes('from public.model_configs')) {
+        return {
+          rows: [{
+            id: 'openai-fast',
+            request_model_id: 'gpt-image-2',
+            name: 'OpenAI Fast',
+            provider: 'OpenAI Compatible',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            enabled: true,
+            max_tokens: 1000,
+            temperature: '0.7',
+            default_size: '1024x1024',
+            protocol: 'openai',
+            hasApiKey: true,
+          }],
+          rowCount: 1,
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/models`, {
+      headers: {
+        Authorization: 'Bearer admin-token',
+      },
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), [{
+      id: 'openai-fast',
+      requestModelId: 'gpt-image-2',
+      name: 'OpenAI Fast',
+      provider: 'OpenAI Compatible',
+      apiKey: '',
+      apiEndpoint: 'https://provider.example.com/v1/images/generations',
+      enabled: true,
+      maxTokens: 1000,
+      temperature: 0.7,
+      defaultSize: '1024x1024',
+      protocol: 'openai',
+      hasApiKey: true,
+    }]);
+  });
+});
+
+test('PUT /api/models/:id persists a separate upstream request model id', async () => {
+  const dependencies: ServerDependencies = {
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      if (sql.includes('from public.model_configs') && sql.includes('where id = $1')) {
+        assert.deepEqual(params, ['openai-fast']);
+        return {
+          rows: [{
+            id: 'openai-fast',
+            request_model_id: 'gpt-image-2',
+            api_key_ciphertext: 'existing-ciphertext',
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('insert into public.model_configs')) {
+        assert.deepEqual(params, [
+          'openai-fast',
+          'gpt-image-2',
+          'OpenAI Fast',
+          'OpenAI Compatible',
+          'https://provider.example.com/v1/images/generations',
+          'existing-ciphertext',
+          true,
+          1000,
+          0.7,
+          '1024x1024',
+          'openai',
+        ]);
+        return { rows: [], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/models/openai-fast`, {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer admin-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: 'openai-fast',
+        requestModelId: 'gpt-image-2',
+        name: 'OpenAI Fast',
+        provider: 'OpenAI Compatible',
+        apiKey: '',
+        apiEndpoint: 'https://provider.example.com/v1/images/generations',
+        enabled: true,
+        maxTokens: 1000,
+        temperature: 0.7,
+        defaultSize: '1024x1024',
+        protocol: 'openai',
+      }),
+    });
+
+    assert.equal(response.status, 204);
+  });
+});
+
+test('DELETE /api/models/:id deletes a saved model config', async () => {
+  const dependencies: ServerDependencies = {
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      if (sql.includes('delete from public.model_configs where id = $1')) {
+        assert.deepEqual(params, ['openai-fast']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/models/openai-fast`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: 'Bearer admin-token',
+      },
+    });
+
+    assert.equal(response.status, 204);
+  });
+});
+
+test('POST /api/models/:id/test checks a saved model config against the upstream provider', async () => {
+  const configCryptKey = '00112233445566778899aabbccddeeff';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+  let upstreamRequestBody: Record<string, unknown> | null = null;
+
+  const dependencies: ServerDependencies = {
+    configCryptKey,
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      if (sql.includes('from public.model_configs') && sql.includes('where id = $1')) {
+        assert.deepEqual(params, ['openai-fast']);
+        return {
+          rows: [{
+            id: 'openai-fast',
+            request_model_id: 'gpt-image-2',
+            enabled: true,
+            protocol: 'openai',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+            default_size: '768x1024',
+          }],
+          rowCount: 1,
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async (input, init) => {
+      assert.equal(input, 'https://provider.example.com/v1/images/generations');
+      assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer provider-key');
+      upstreamRequestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        data: [{ b64_json: Buffer.from('png-binary').toString('base64') }],
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/models/openai-fast/test`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer admin-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      status: 200,
+      message: 'Model test succeeded',
+    });
+  });
+
+  assert.deepEqual(upstreamRequestBody, {
+    model: 'gpt-image-2',
+    prompt: 'availability test',
+    n: 1,
+    size: '768x1024',
+  });
+});
+
+test('POST /api/models/:id/test returns upstream diagnostics without saving images', async () => {
+  const configCryptKey = 'abcdefabcdefabcdefabcdefabcdefab';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+
+  const dependencies: ServerDependencies = {
+    configCryptKey,
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      if (sql.includes('from public.model_configs') && sql.includes('where id = $1')) {
+        assert.deepEqual(params, ['openai-fast']);
+        return {
+          rows: [{
+            id: 'openai-fast',
+            request_model_id: 'gpt-image-2',
+            enabled: true,
+            protocol: 'openai',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+            default_size: '1024x1024',
+          }],
+          rowCount: 1,
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async () => new Response(JSON.stringify({ error: 'invalid api key' }), {
+      status: 401,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }),
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/models/openai-fast/test`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer admin-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      status: 401,
+      message: 'Upstream failed: 401',
+      details: '{"error":"invalid api key"}',
+    });
+  });
+});
+
 test('GET /api/settings/public returns only the public web url', async () => {
   const dependencies: ServerDependencies = {
     query: async (sql) => {
@@ -723,6 +1010,121 @@ test('POST /api/generate creates and returns a business generation code while ke
   }
 
   assert.match(String(insertedGenerationCode), /^gen_\d{13}_[a-z0-9]{6}$/);
+});
+
+test('POST /api/generate sends the configured request model id upstream while storing the selected config id', async () => {
+  const configCryptKey = '00112233445566778899aabbccddeeff';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+  let upstreamRequestBody: Record<string, unknown> | null = null;
+
+  const dependencies: ServerDependencies = {
+    configCryptKey,
+    resolveAuthUser: async () => ({ id: 'shared-user', email: 'shared@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select is_disabled') && sql.includes('concurrency_limit')) {
+        assert.deepEqual(params, ['shared-user']);
+        return {
+          rows: [{ is_disabled: false, concurrency_limit: 1 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('count(*)::int as active_generation_count')) {
+        assert.deepEqual(params, ['shared-user']);
+        return {
+          rows: [{ active_generation_count: 0 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('from public.model_configs')) {
+        assert.deepEqual(params, ['openai-fast']);
+        return {
+          rows: [{
+            id: 'openai-fast',
+            request_model_id: 'gpt-image-2',
+            enabled: true,
+            protocol: 'openai',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('insert into public.generations')) {
+        assert.deepEqual(params?.slice(0, 5), ['shared-user', 'draw a comet', '1:1', 75, 'openai-fast']);
+        return {
+          rows: [{ id: 'gen-shared-1' }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('set status = \'generating\'')) {
+        assert.deepEqual(params, ['gen-shared-1', 'shared-user']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'completed\'')) {
+        assert.deepEqual(params?.slice(0, 2), ['gen-shared-1', 'shared-user']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async (input, init) => {
+      assert.equal(input, 'https://provider.example.com/v1/images/generations');
+      upstreamRequestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        data: [{ b64_json: Buffer.from('png-binary').toString('base64') }],
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    },
+    getStorageClient: async () => ({
+      storage: {
+        from: (bucket: string) => {
+          assert.equal(bucket, 'images');
+          return {
+            upload: async () => ({ error: null }),
+            getPublicUrl: (filePath: string) => ({
+              data: {
+                publicUrl: `https://cdn.example.com/${filePath}`,
+              },
+            }),
+          };
+        },
+      },
+    }) as Awaited<ReturnType<NonNullable<ServerDependencies['getStorageClient']>>>,
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer user-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'draw a comet',
+        modelId: 'openai-fast',
+        aspectRatio: '1:1',
+        styleStrength: 75,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+  });
+
+  assert.deepEqual(upstreamRequestBody, {
+    model: 'gpt-image-2',
+    prompt: 'draw a comet',
+    n: 1,
+    size: '1024x1024',
+  });
 });
 
 test('POST /api/generate switches to image-edit mode when a reference image is provided', async () => {

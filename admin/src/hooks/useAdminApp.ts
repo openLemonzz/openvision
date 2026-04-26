@@ -7,6 +7,7 @@ import type {
   AppSettings,
   GenerationRecord,
   ModelConfig,
+  ModelTestResult,
 } from '@/lib/types';
 import { handleAdminAuthStateChange } from './admin-auth-state';
 
@@ -151,6 +152,20 @@ export function useAdminApp() {
     setModels(nextModels.map((model) => ({ ...model, apiKey: '' })));
   }, []);
 
+  const deleteModel = useCallback(async (id: string) => {
+    await apiFetch(`/models/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    setModels((prev) => prev.filter((model) => model.id !== id));
+  }, []);
+
+  const testModel = useCallback(async (model: ModelConfig) => (
+    apiFetch<ModelTestResult>(`/models/${encodeURIComponent(model.id)}/test`, {
+      method: 'POST',
+      body: JSON.stringify(model),
+    })
+  ), []);
+
   const updateSettings = useCallback(async (nextSettings: AppSettings) => {
     const savedSettings = await apiFetch<AppSettings>('/settings', {
       method: 'PUT',
@@ -199,6 +214,8 @@ export function useAdminApp() {
     deleteUser,
     updateUserSettings,
     updateModels,
+    deleteModel,
+    testModel,
     updateSettings,
     deleteGeneration,
     refresh,

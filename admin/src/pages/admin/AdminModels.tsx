@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Save, Key, Globe, Sliders, ToggleLeft, ToggleRight, AlertTriangle, Check, Plus, Trash2 } from 'lucide-react';
-import type { ApiProtocol, ModelConfig } from '@/lib/types';
+import { Save, Key, Globe, Sliders, ToggleLeft, ToggleRight, AlertTriangle, Check, Plus, Trash2, Activity } from 'lucide-react';
+import type { ApiProtocol, ModelConfig, ModelTestResult } from '@/lib/types';
 import {
   createEditableModels,
   createModelDraft,
@@ -12,6 +12,8 @@ import {
 interface AdminModelsProps {
   models: ModelConfig[];
   onUpdateModels: (models: ModelConfig[]) => Promise<void>;
+  onDeleteModel: (id: string) => Promise<void>;
+  onTestModel: (model: ModelConfig) => Promise<ModelTestResult>;
 }
 
 const SIZE_OPTIONS = ['1024x1024', '1024x576', '768x1024', '576x1024', '1792x1024', '1024x1792'];
@@ -23,11 +25,29 @@ const PROTOCOL_OPTIONS: { value: ApiProtocol; label: string }[] = [
   { value: 'custom', label: '自定义 / 其他' },
 ];
 
-export default function AdminModels({ models, onUpdateModels }: AdminModelsProps) {
+function readErrorMessage(error: unknown) {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+
+  try {
+    const parsed = JSON.parse(rawMessage) as { error?: unknown };
+    if (typeof parsed.error === 'string' && parsed.error.trim()) {
+      return parsed.error.trim();
+    }
+  } catch {
+    // Fall through to the raw message.
+  }
+
+  return rawMessage;
+}
+
+export default function AdminModels({ models, onUpdateModels, onDeleteModel, onTestModel }: AdminModelsProps) {
   const [localModels, setLocalModels] = useState<EditableModelConfig[]>(() => createEditableModels(models));
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  const [deletingKeys, setDeletingKeys] = useState<Record<string, boolean>>({});
+  const [testingKeys, setTestingKeys] = useState<Record<string, boolean>>({});
+  const [testResults, setTestResults] = useState<Record<string, ModelTestResult>>({});
 
   useEffect(() => {
     setLocalModels(createEditableModels(models));
@@ -45,10 +65,80 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
     setErrors([]);
   };
 
-  const removeDraftModel = (draftKey: string) => {
-    setLocalModels(prev => prev.filter((model) => model.draftKey !== draftKey));
-    setSaved(false);
+  const removeModel = async (model: EditableModelConfig) => {
+    if (!model.isNew && !window.confirm(`删除模型配置 ${model.id}？`)) {
+      return;
+    }
+
+    if (model.isNew) {
+      setLocalModels(prev => prev.filter((item) => item.draftKey !== model.draftKey));
+      setSaved(false);
+      setErrors([]);
+      setTestResults((prev) => {
+        const next = { ...prev };
+        delete next[model.draftKey];
+        return next;
+      });
+      return;
+    }
+
+    setDeletingKeys((prev) => ({ ...prev, [model.draftKey]: true }));
     setErrors([]);
+
+    try {
+      await onDeleteModel(model.id);
+      setLocalModels(prev => prev.filter((item) => item.draftKey !== model.draftKey));
+      setTestResults((prev) => {
+        const next = { ...prev };
+        delete next[model.draftKey];
+        return next;
+      });
+    } catch (error) {
+      setErrors([readErrorMessage(error)]);
+    } finally {
+      setDeletingKeys((prev) => {
+        const next = { ...prev };
+        delete next[model.draftKey];
+        return next;
+      });
+    }
+  };
+
+  const testModel = async (model: EditableModelConfig) => {
+    const validationErrors = validateEditableModels([model]);
+    if (validationErrors.length > 0) {
+      setTestResults((prev) => ({
+        ...prev,
+        [model.draftKey]: {
+          ok: false,
+          message: validationErrors[0],
+        },
+      }));
+      return;
+    }
+
+    setTestingKeys((prev) => ({ ...prev, [model.draftKey]: true }));
+    setErrors([]);
+
+    try {
+      const [persistedModel] = toPersistedModels([model]);
+      const result = await onTestModel(persistedModel);
+      setTestResults((prev) => ({ ...prev, [model.draftKey]: result }));
+    } catch (error) {
+      setTestResults((prev) => ({
+        ...prev,
+        [model.draftKey]: {
+          ok: false,
+          message: readErrorMessage(error),
+        },
+      }));
+    } finally {
+      setTestingKeys((prev) => {
+        const next = { ...prev };
+        delete next[model.draftKey];
+        return next;
+      });
+    }
   };
 
   const handleSave = async () => {
@@ -69,7 +159,7 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
       setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       setErrors([
-        error instanceof Error ? error.message : String(error),
+        readErrorMessage(error),
       ]);
       setSaved(false);
     } finally {
@@ -158,20 +248,33 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                     <span className="text-[8px] text-[#555] font-mono-data px-1.5 py-0.5 border border-[#333] bg-[#1a1a1a]">
                       {PROTOCOL_OPTIONS.find(p => p.value === model.protocol)?.label || model.protocol}
                     </span>
-                    <span className="text-[8px] text-[#444] font-mono-data">ID: {model.id}</span>
+                    <span className="text-[8px] text-[#444] font-mono-data">配置: {model.id}</span>
+                    <span className="text-[8px] text-[#444] font-mono-data">请求: {model.requestModelId}</span>
                   </div>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                {model.isNew && (
-                  <button
-                    onClick={() => removeDraftModel(model.draftKey)}
-                    className="text-[#666] hover:text-red-400 transition-colors"
-                    title="移除未保存模型"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
+                <button
+                  onClick={() => {
+                    void testModel(model);
+                  }}
+                  disabled={Boolean(testingKeys[model.draftKey] || deletingKeys[model.draftKey])}
+                  className="flex items-center gap-1.5 text-[9px] font-mono-data px-2 py-1 border border-[#333] text-[#aaa] hover:text-white hover:border-white transition-colors disabled:opacity-50"
+                  title="测试可用性"
+                >
+                  <Activity size={12} />
+                  {testingKeys[model.draftKey] ? '测试中' : '测试'}
+                </button>
+                <button
+                  onClick={() => {
+                    void removeModel(model);
+                  }}
+                  disabled={Boolean(deletingKeys[model.draftKey] || testingKeys[model.draftKey])}
+                  className="text-[#666] hover:text-red-400 transition-colors disabled:opacity-50"
+                  title={model.isNew ? '移除未保存模型' : '删除模型配置'}
+                >
+                  <Trash2 size={14} />
+                </button>
                 <span className={`text-[9px] font-mono-data px-2 py-0.5 border ${
                   model.enabled
                     ? 'text-emerald-400 border-emerald-400/30'
@@ -181,6 +284,28 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                 </span>
               </div>
             </div>
+
+            {testResults[model.draftKey] && (
+              <div className={`px-5 py-2 border-b border-[#222] text-[10px] font-mono-data ${
+                testResults[model.draftKey].ok
+                  ? 'text-emerald-300 bg-emerald-400/5'
+                  : 'text-red-200 bg-red-400/5'
+              }`}>
+                <span>
+                  {testResults[model.draftKey].ok ? '测试通过' : '测试失败'}
+                </span>
+                <span className="text-[#777] mx-2">/</span>
+                <span>{testResults[model.draftKey].message}</span>
+                {typeof testResults[model.draftKey].status !== 'undefined' && (
+                  <span className="text-[#777] ml-2">HTTP {testResults[model.draftKey].status}</span>
+                )}
+                {testResults[model.draftKey].details && (
+                  <div className="text-[#888] mt-1 break-all">
+                    {testResults[model.draftKey].details}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Card body */}
             <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -198,15 +323,29 @@ export default function AdminModels({ models, onUpdateModels }: AdminModelsProps
                 />
               </div>
 
-              {/* Model ID */}
+              {/* Config ID */}
+              <div>
+                <label className="flex items-center gap-1.5 text-[10px] text-[#888] uppercase tracking-[0.15em] mb-2 font-mono-data">
+                  配置 ID
+                </label>
+                <input
+                  type="text"
+                  value={model.id}
+                  readOnly
+                  placeholder="new-model-1"
+                  className="w-full bg-[#0b0b0b] border border-[#222] text-[#777] text-[12px] px-3 py-2.5 focus:outline-none placeholder:text-[#444] font-mono-data"
+                />
+              </div>
+
+              {/* Request Model ID */}
               <div>
                 <label className="flex items-center gap-1.5 text-[10px] text-[#888] uppercase tracking-[0.15em] mb-2 font-mono-data">
                   请求模型 ID
                 </label>
                 <input
                   type="text"
-                  value={model.id}
-                  onChange={e => updateModel(model.draftKey, { id: e.target.value })}
+                  value={model.requestModelId}
+                  onChange={e => updateModel(model.draftKey, { requestModelId: e.target.value })}
                   placeholder="gpt-image-2"
                   className="w-full bg-transparent border border-[#333] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none placeholder:text-[#444] font-mono-data"
                 />

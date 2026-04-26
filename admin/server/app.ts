@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import type { Response } from 'express';
-import { config, missingServerConfig } from './config.js';
+import { config } from './config.js';
 import { pool } from './db.js';
 import { decryptSecret, encryptSecret } from './crypto.js';
 import {
@@ -111,6 +111,40 @@ function resolveEditSize(aspectRatio: string) {
   };
 
   return sizeMap[aspectRatio] || '1024x1024';
+}
+
+function parseImageSize(size: unknown) {
+  const value = typeof size === 'string' && /^\d+x\d+$/.test(size.trim())
+    ? size.trim()
+    : '1024x1024';
+  const [width, height] = value.split('x').map(Number);
+
+  return { value, width, height };
+}
+
+function buildModelAvailabilityRequest(model: Record<string, unknown>) {
+  const prompt = 'availability test';
+  const protocol = String(model.protocol || 'openai');
+  const upstreamModelId = String(model.request_model_id || model.id);
+  const size = parseImageSize(model.default_size);
+
+  if (protocol === 'stability') {
+    return {
+      text_prompts: [{ text: prompt, weight: 1 }],
+      cfg_scale: 7,
+      steps: 30,
+      width: size.width,
+      height: size.height,
+      samples: 1,
+    };
+  }
+
+  return {
+    model: upstreamModelId,
+    prompt,
+    n: 1,
+    size: size.value,
+  };
 }
 
 function sharesOrigin(baseUrl: string, candidateUrl: string) {
@@ -305,7 +339,7 @@ export function createApp({
     }
 
     const { rows } = await query(
-      `select id, name, provider, api_endpoint, api_key_ciphertext, enabled, max_tokens,
+      `select id, request_model_id, name, provider, api_endpoint, api_key_ciphertext, enabled, max_tokens,
               temperature, default_size, protocol
          from public.model_configs
         where id = $1
@@ -621,7 +655,7 @@ export function createApp({
   app.get('/api/models', requireAdmin, asyncHandler(async (_req, res) => {
     if (!ensureServerRuntime(res)) return;
     const { rows } = await query!(
-      `select id, name, provider, api_endpoint, enabled, max_tokens, temperature,
+      `select id, request_model_id, name, provider, api_endpoint, enabled, max_tokens, temperature,
               default_size, protocol,
               case when api_key_ciphertext is not null and api_key_ciphertext <> '' then true else false end as "hasApiKey"
          from public.model_configs
@@ -630,6 +664,7 @@ export function createApp({
 
     res.json(rows.map((row: Record<string, unknown>) => ({
       id: row.id,
+      requestModelId: row.request_model_id || row.id,
       name: row.name,
       provider: row.provider,
       apiKey: '',
@@ -647,7 +682,8 @@ export function createApp({
     if (!ensureServerRuntime(res)) return;
     const currentId = String(req.params.id);
     const existing = await loadModelConfig(currentId);
-    const nextId = String(req.body.id || currentId);
+    const nextId = String(req.body.id || currentId).trim();
+    const nextRequestModelId = String(req.body.requestModelId || nextId).trim() || nextId;
     const apiKeyCiphertext =
       req.body.apiKey?.trim()
         ? encryptSecret(req.body.apiKey.trim(), configCryptKey)
@@ -655,11 +691,12 @@ export function createApp({
 
     await query!(
       `insert into public.model_configs
-         (id, name, provider, api_endpoint, api_key_ciphertext, enabled, max_tokens, temperature, default_size, protocol)
+         (id, request_model_id, name, provider, api_endpoint, api_key_ciphertext, enabled, max_tokens, temperature, default_size, protocol)
        values
-         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        on conflict (id) do update
-         set name = excluded.name,
+         set request_model_id = excluded.request_model_id,
+             name = excluded.name,
              provider = excluded.provider,
              api_endpoint = excluded.api_endpoint,
              api_key_ciphertext = excluded.api_key_ciphertext,
@@ -671,6 +708,7 @@ export function createApp({
              updated_at = now()`,
       [
         nextId,
+        nextRequestModelId,
         req.body.name,
         req.body.provider,
         req.body.apiEndpoint,
@@ -688,6 +726,124 @@ export function createApp({
     }
 
     res.status(204).end();
+  }));
+
+  app.delete('/api/models/:id', requireAdmin, asyncHandler(async (req, res) => {
+    if (!ensureServerRuntime(res)) return;
+
+    const { rowCount } = await query!(
+      'delete from public.model_configs where id = $1',
+      [String(req.params.id)]
+    );
+
+    if (!rowCount) {
+      res.status(404).json({ error: 'Model config not found' });
+      return;
+    }
+
+    res.status(204).end();
+  }));
+
+  app.post('/api/models/:id/test', requireAdmin, asyncHandler(async (req, res) => {
+    if (!ensureServerRuntime(res)) return;
+
+    const currentId = String(req.params.id);
+    const existing = await loadModelConfig(currentId);
+    const body = typeof req.body === 'object' && req.body !== null
+      ? req.body as Record<string, unknown>
+      : {};
+    const hasBodyConfig = Boolean(
+      body.id ||
+      body.requestModelId ||
+      body.apiEndpoint ||
+      body.defaultSize ||
+      body.protocol
+    );
+
+    if (!existing && !hasBodyConfig) {
+      res.status(404).json({ error: 'Model config not found' });
+      return;
+    }
+
+    const testModel: Record<string, unknown> = {
+      id: String(body.id || existing?.id || currentId).trim() || currentId,
+      request_model_id: String(
+        body.requestModelId ||
+        existing?.request_model_id ||
+        body.id ||
+        existing?.id ||
+        currentId
+      ).trim(),
+      api_endpoint: String(body.apiEndpoint || existing?.api_endpoint || '').trim(),
+      default_size: String(body.defaultSize || existing?.default_size || '1024x1024').trim(),
+      protocol: String(body.protocol || existing?.protocol || 'openai').trim(),
+    };
+
+    if (!testModel.request_model_id) {
+      res.status(400).json({ error: 'Request model ID is required' });
+      return;
+    }
+
+    if (!testModel.api_endpoint) {
+      res.status(400).json({ error: 'API endpoint is required' });
+      return;
+    }
+
+    const apiKey =
+      typeof body.apiKey === 'string' && body.apiKey.trim()
+        ? body.apiKey.trim()
+        : existing?.api_key_ciphertext
+        ? decryptSecret(String(existing.api_key_ciphertext), configCryptKey)
+        : '';
+
+    if (!apiKey) {
+      res.status(400).json({ error: 'Model API key is not configured' });
+      return;
+    }
+
+    let apiResponse: globalThis.Response;
+    try {
+      apiResponse = await fetchWithTimeout(
+        fetchImpl,
+        String(testModel.api_endpoint),
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(buildModelAvailabilityRequest(testModel)),
+        },
+        generationRequestTimeoutMs,
+      );
+    } catch (error) {
+      if (isAbortError(error)) {
+        res.json({
+          ok: false,
+          message: 'Upstream request timed out',
+          details: `Upstream request to provider timed out after ${generationRequestTimeoutMs}ms`,
+        });
+        return;
+      }
+
+      throw error;
+    }
+
+    if (!apiResponse.ok) {
+      res.json({
+        ok: false,
+        status: apiResponse.status,
+        message: `Upstream failed: ${apiResponse.status}`,
+        details: truncateDiagnosticText(await apiResponse.text()),
+      });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      status: apiResponse.status,
+      message: 'Model test succeeded',
+    });
   }));
 
   app.get('/api/public/models', asyncHandler(async (_req, res) => {
@@ -906,10 +1062,11 @@ export function createApp({
         [generationId, userId]
       );
 
+      const upstreamModelId = String(model.request_model_id || model.id);
       const requestBody =
         referenceImageUrl
           ? {
-              model: model.id,
+              model: upstreamModelId,
               prompt,
               n: 1,
               size: resolveEditSize(aspectRatio),
@@ -928,7 +1085,7 @@ export function createApp({
               };
             })()
           : {
-              model: model.id,
+              model: upstreamModelId,
               prompt,
               n: 1,
               size: resolveGenerationSize(aspectRatio),
@@ -1108,6 +1265,7 @@ export function createApp({
   }));
 
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    void _next;
     const message = error instanceof Error ? error.message : String(error);
     res.status(500).json({ error: message });
   });

@@ -101,6 +101,7 @@ create table if not exists public.referrals (
 
 create table if not exists public.model_configs (
   id text primary key,
+  request_model_id text not null,
   name text not null,
   provider text not null,
   api_endpoint text not null,
@@ -113,6 +114,17 @@ create table if not exists public.model_configs (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.model_configs
+  add column if not exists request_model_id text;
+
+update public.model_configs
+   set request_model_id = id
+ where request_model_id is null
+    or btrim(request_model_id) = '';
+
+alter table public.model_configs
+  alter column request_model_id set not null;
 
 create table if not exists public.app_settings (
   id text primary key default 'default' check (id = 'default'),
@@ -210,6 +222,7 @@ create trigger on_auth_user_created
 
 insert into public.model_configs (
   id,
+  request_model_id,
   name,
   provider,
   api_endpoint,
@@ -219,7 +232,7 @@ insert into public.model_configs (
   default_size,
   protocol
 ) values
-  ('gpt-image-2', 'GPT-Image-2', 'OpenAI Compatible', 'https://api.example.com/v1/images/generations', true, 1000, 0.7, '1024x1024', 'openai')
+  ('gpt-image-2', 'gpt-image-2', 'GPT-Image-2', 'OpenAI Compatible', 'https://api.example.com/v1/images/generations', true, 1000, 0.7, '1024x1024', 'openai')
 on conflict (id) do nothing;
 
 insert into public.app_settings (id, public_web_url)
