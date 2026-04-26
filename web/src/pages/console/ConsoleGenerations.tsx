@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { Clock, Ratio } from 'lucide-react';
 import CopyableMonoValue from '../../components/CopyableMonoValue';
 import GenerationImageActions from '../../components/GenerationImageActions';
+import Lightbox from '../../components/ui/Lightbox';
 import type { GenerationRecord } from '../../hooks/useGeneration';
 import {
   buildGenerationProgressTrack,
@@ -31,15 +32,19 @@ const aspectMap: Record<string, string> = {
 
 export default function ConsoleGenerations({ history, onDelete, onToggleFavorite, onEditImage, onRetryGenerate, lifecycleTick }: ConsoleGenerationsProps) {
   void lifecycleTick;
-  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setLightboxImage(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  const completedImages = history
+    .filter(r => r.status === 'completed' && r.imageUrl)
+    .map(r => r.imageUrl!);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
+  const openLightbox = useCallback((url: string) => {
+    const idx = completedImages.indexOf(url);
+    setLightboxIndex(idx >= 0 ? idx : null);
+  }, [completedImages]);
+
+  // ESC 关闭已由 Lightbox 内部处理
+  useEffect(() => {}, []);
 
   const formatTime = useCallback((ts: number) => {
     const d = new Date(ts);
@@ -110,9 +115,7 @@ export default function ConsoleGenerations({ history, onDelete, onToggleFavorite
             <div className="p-5">
               {record.status === 'pending' ? (
                 <div className="group relative w-full flex items-center justify-center bg-[#0D0D0D] border border-[#262626]" style={{ aspectRatio: aspectMap[record.aspectRatio] || '1/1' }}>
-                  <GenerationImageActions
-                    onDelete={() => onDelete(record.id)}
-                  />
+                  <GenerationImageActions onDelete={() => onDelete(record.id)} />
                   <div className="text-center">
                     <div className="w-3 h-3 bg-[#444] mx-auto mb-3" style={{ animation: 'pulse-dot 1.5s ease-in-out infinite' }} />
                     <p className="text-[10px] text-[#4D4D4D] uppercase tracking-[0.2em] font-mono-data">Queued...</p>
@@ -120,9 +123,7 @@ export default function ConsoleGenerations({ history, onDelete, onToggleFavorite
                 </div>
               ) : record.status === 'generating' ? (
                 <div className="group relative w-full flex items-center justify-center bg-[#0D0D0D] border border-[#262626]" style={{ aspectRatio: aspectMap[record.aspectRatio] || '1/1' }}>
-                  <GenerationImageActions
-                    onDelete={() => onDelete(record.id)}
-                  />
+                  <GenerationImageActions onDelete={() => onDelete(record.id)} />
                   <div className="text-center">
                     <div className="w-3 h-3 bg-white mx-auto mb-3" style={{ animation: 'pulse-dot 1s ease-in-out infinite' }} />
                     <p className="text-[10px] text-[#4D4D4D] uppercase tracking-[0.2em] font-mono-data">Processing...</p>
@@ -137,8 +138,8 @@ export default function ConsoleGenerations({ history, onDelete, onToggleFavorite
                     isFavorite={record.isFavorite}
                     onToggleFavorite={() => onToggleFavorite(record.id)}
                     onDelete={() => onDelete(record.id)}
-                    onEditImage={() => onEditImage(record.imageUrl, record.prompt)}
-                    onZoom={() => setLightboxImage(record.imageUrl)}
+                    onEditImage={() => onEditImage(record.imageUrl!, record.prompt)}
+                    onZoom={() => openLightbox(record.imageUrl!)}
                   />
                 </div>
               ) : (
@@ -160,22 +161,30 @@ export default function ConsoleGenerations({ history, onDelete, onToggleFavorite
         ))}
       </div>
 
-      {/* Lightbox */}
-      {lightboxImage && (
-        <div className="fixed inset-0 z-[300] bg-black/95 flex items-center justify-center p-8" onClick={() => setLightboxImage(null)}>
-          <img src={lightboxImage} alt="" className="max-w-full max-h-full object-contain" onClick={e => e.stopPropagation()} />
-          <button onClick={() => setLightboxImage(null)} className="absolute top-6 right-6 text-[#A8A8A8] hover:text-white text-[12px] uppercase tracking-[0.2em] font-mono-data" aria-label="关闭">Close</button>
-        </div>
+      {/* Lightbox with keyboard navigation */}
+      {lightboxIndex !== null && (
+        <Lightbox
+          images={completedImages}
+          currentIndex={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onNavigate={setLightboxIndex}
+        />
       )}
     </div>
   );
 }
 
 function ProgressTrack({ record }: { record: GenerationRecord }) {
-  const track = buildGenerationProgressTrack(resolveGenerationRecordProgressPhase(record));
+  const phase = resolveGenerationRecordProgressPhase(record);
+  const track = buildGenerationProgressTrack(phase);
+  const isActive = record.status === 'generating' || record.status === 'pending';
+  const activeIdx = isActive
+    ? track.findIndex(s => s.state !== 'complete' && s.state !== 'failed')
+    : -1;
+
   return (
     <div className="mt-2 grid grid-cols-5 gap-2">
-      {track.map((stage) => (
+      {track.map((stage, idx) => (
         <div key={stage.key} className="space-y-2">
           <div className="h-[3px] w-full overflow-hidden rounded-full bg-[#1a1a1a]">
             <div
@@ -184,9 +193,11 @@ function ProgressTrack({ record }: { record: GenerationRecord }) {
                   ? 'bg-white'
                   : stage.state === 'failed'
                   ? 'bg-red-400'
+                  : idx === activeIdx
+                  ? 'progress-active-shimmer'
                   : 'bg-transparent'
               }`}
-              style={{ width: stage.state === 'pending' ? '0%' : '100%' }}
+              style={{ width: stage.state === 'pending' && idx !== activeIdx ? '0%' : '100%' }}
             />
           </div>
           <p className={`text-[8px] font-mono-data uppercase tracking-[0.12em] leading-snug ${
@@ -194,6 +205,8 @@ function ProgressTrack({ record }: { record: GenerationRecord }) {
               ? 'text-white'
               : stage.state === 'failed'
               ? 'text-red-300'
+              : idx === activeIdx
+              ? 'text-[#888]'
               : 'text-[#666]'
           }`}>
             {stage.label}

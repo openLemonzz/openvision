@@ -74,11 +74,11 @@ export default function AuthModal({ visible, mode, error, confirmation, onClose,
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center">
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm modal-overlay-animate"
         onClick={handleBackdropClick}
       />
       <div
-        className="liquid-glass-strong relative w-full max-w-[420px] mx-4 p-10"
+        className="liquid-glass-strong modal-panel-animate relative w-full max-w-[420px] mx-4 p-10"
         onClick={e => e.stopPropagation()}
       >
         <button

@@ -1,4 +1,6 @@
-import { Heart, Maximize2, MoreHorizontal, RefreshCcw, Trash2, Wand2 } from 'lucide-react';
+import { useState } from 'react';
+import { Heart, Maximize2, MoreHorizontal, RefreshCcw, Trash2, Wand2, Download, Share2, Check } from 'lucide-react';
+
 import { toast } from 'sonner';
 import {
   DropdownMenu,
@@ -127,6 +129,26 @@ export default function GenerationImageActions({
     ) : null,
   ].filter(Boolean);
 
+  const [shareState, setShareState] = useState<'idle' | 'copied'>('idle');
+
+  const handleShare = async () => {
+    // 优先使用系统分享
+    if (navigator.share) {
+      try {
+        await navigator.share({ url: imageUrl ?? '' });
+        return;
+      } catch {
+        // 用户取消分享，不做处理
+        return;
+      }
+    }
+    // 降级：复制链接
+    await navigator.clipboard.writeText(imageUrl!);
+    setShareState('copied');
+    toast.success('已复制图片链接');
+    setTimeout(() => setShareState('idle'), 2000);
+  };
+
   return (
     <div className="absolute right-3 top-3 z-10 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
       {actionButtons}
@@ -149,19 +171,18 @@ export default function GenerationImageActions({
                 downloadImage(imageUrl, downloadName || 'vision-image.png');
               }}
             >
+              <Download size={13} />
               下载
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={() => {
-                void navigator.clipboard.writeText(imageUrl);
-                toast.success('已复制图片链接');
-              }}
+              onClick={() => void handleShare()}
             >
-              复制图片链接
+              {shareState === 'copied' ? <Check size={13} className="text-emerald-400" /> : <Share2 size={13} />}
+              {shareState === 'copied' ? '已复制链接' : '分享'}
             </DropdownMenuItem>
             {onEditImage ? (
               <DropdownMenuItem onClick={onEditImage}>
-                <Wand2 size={14} />
+                <Wand2 size={13} />
                 改图
               </DropdownMenuItem>
             ) : null}

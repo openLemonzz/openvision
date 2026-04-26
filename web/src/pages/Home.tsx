@@ -70,7 +70,6 @@ export default function Home({
   onToggleFavoriteRecord,
   onRetryGenerateRecord,
 }: HomeProps) {
-  const [remixPrompt, setRemixPrompt] = useState<string | undefined>(undefined);
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
   const [draftAspectRatio, setDraftAspectRatio] = useState<'1:1' | '16:9' | '3:4' | '9:16' | null>(null);
   const [draftStyleStrength, setDraftStyleStrength] = useState<number | null>(null);
@@ -98,9 +97,7 @@ export default function Home({
     }
 
     setReferenceImageUrl(editDraft.imageUrl);
-    if (editDraft.prompt) {
-      setRemixPrompt(editDraft.prompt);
-    }
+    // 不回填 prompt，让用户自行输入新指令
     setDraftAspectRatio(editDraft.aspectRatio ?? null);
     setDraftStyleStrength(editDraft.styleStrength ?? null);
     setDraftEngine(editDraft.engine ?? null);
@@ -152,21 +149,21 @@ export default function Home({
       </div>
 
       {/* Content */}
-      <div className="relative z-10 pt-[80px] pb-10">
+      <div className="relative z-10 pt-[72px] pb-10">
         {/* Hero section with generate console */}
-        <section className="min-h-[calc(100vh-80px)] flex flex-col items-center justify-center px-4">
+        <section className="flex flex-col items-center justify-center px-4 pt-4 pb-8">
           {/* Title */}
           <div className={`text-center mb-10 ${playHomeIntroAnimation ? 'home-hero-enter' : ''}`}>
-            <p className="text-[10px] text-[#B8B8B8] uppercase tracking-[0.34em] font-mono-data mb-4">
+            <p className="text-[10px] text-[#B8B8B8] uppercase tracking-[0.34em] font-mono-data mb-3">
               AIGC · Image Generation Platform
             </p>
             <h1
-              className="text-[clamp(36px,6vw,72px)] font-normal text-white leading-[0.95] tracking-[0.02em] uppercase"
+              className="text-[clamp(28px,5vw,56px)] font-normal text-white leading-[0.95] tracking-[0.02em] uppercase"
               style={{ fontFamily: "'Geist Pixel', 'IBM Plex Mono', ui-monospace, monospace" }}
             >
               VISION
             </h1>
-            <p className="mt-4 min-h-[1.6em] text-[13px] text-[#CFCFCF] uppercase tracking-[0.28em] font-mono-data">
+            <p className="mt-3 min-h-[1.4em] text-[11px] text-[#CFCFCF] uppercase tracking-[0.24em] font-mono-data">
               <span className="inline-block align-top">{resolvedSlogan || ' '}</span>
               {showSloganCursor ? (
                 <span aria-hidden="true" className="home-slogan-cursor ml-1 inline-block align-top text-white/70">
@@ -187,7 +184,6 @@ export default function Home({
             modelsError={modelsError}
             modelsLoading={modelsLoading}
             referenceImageUrl={referenceImageUrl}
-            remixPrompt={remixPrompt}
             draftAspectRatio={draftAspectRatio}
             draftStyleStrength={draftStyleStrength}
             draftEngine={draftEngine}
@@ -204,12 +200,12 @@ export default function Home({
 
         {/* History Stream */}
         <HistoryStream
-          records={history.slice(0, 1)}
+          records={history}
+          foldable
           onDelete={onDeleteRecord}
           onToggleFavorite={onToggleFavoriteRecord}
-          onEditImage={(imageUrl, prompt) => {
+          onEditImage={(imageUrl) => {
             setReferenceImageUrl(imageUrl);
-            setRemixPrompt(prompt);
           }}
           onRetryGenerate={(prompt, aspectRatio, styleStrength, engine) => {
             onRetryGenerateRecord(prompt, aspectRatio, styleStrength, engine);

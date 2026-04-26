@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Grid3X3, List } from 'lucide-react';
 import CopyableMonoValue from '../components/CopyableMonoValue';
 import GenerationImageActions from '../components/GenerationImageActions';
+import Lightbox from '../components/ui/Lightbox';
 import type { GenerationRecord } from '../hooks/useGeneration';
 
 interface GalleryProps {
@@ -17,21 +18,22 @@ const FILTER_OPTIONS = ['全部', '1:1', '16:9', '3:4', '9:16'];
 export default function Gallery({ history, onDelete, onToggleFavorite, onEditImage }: GalleryProps) {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [filter, setFilter] = useState('全部');
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSelectedImage(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const filtered = filter === '全部'
     ? history
     : history.filter(r => r.aspectRatio === filter);
 
   const favoriteRecords = filtered.filter(r => r.status === 'completed' && r.imageUrl);
+  const imageUrls = favoriteRecords.map(r => r.imageUrl!);
+
+  const openLightbox = (url: string) => {
+    const idx = imageUrls.indexOf(url);
+    setLightboxIndex(idx >= 0 ? idx : null);
+  };
+
+  // Reset lightbox when filter changes
+  useEffect(() => { setLightboxIndex(null); }, [filter]);
 
   return (
     <div className="p-6 lg:p-8">
@@ -91,24 +93,25 @@ export default function Gallery({ history, onDelete, onToggleFavorite, onEditIma
             <div
               key={record.id}
               className="group relative border border-[#222] overflow-hidden hover:border-[#4D4D4D] transition-colors cursor-pointer"
-              onClick={() => setSelectedImage(record.imageUrl)}
+              onClick={() => openLightbox(record.imageUrl!)}
             >
               <img
-                src={record.imageUrl}
+                src={record.imageUrl!}
                 alt={record.prompt}
-                className="w-full aspect-square object-contain bg-[#0D0D0D] block"
+                className="w-full aspect-square object-cover bg-[#0D0D0D] block"
               />
-              <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-4">
+              {/* 信息区：固定左下角，actions 是 absolute 定位不占流 */}
+              <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4">
                 <GenerationImageActions
-                  imageUrl={record.imageUrl}
+                  imageUrl={record.imageUrl!}
                   downloadName={`${record.generationCode || record.pictureId || 'vision-image'}.png`}
                   isFavorite
                   onToggleFavorite={() => onToggleFavorite(record.id)}
                   onDelete={() => onDelete(record.id)}
-                  onEditImage={() => onEditImage(record.imageUrl, record.prompt)}
-                  onZoom={() => setSelectedImage(record.imageUrl)}
+                  onEditImage={() => onEditImage(record.imageUrl!, record.prompt)}
+                  onZoom={() => openLightbox(record.imageUrl!)}
                 />
-                <div>
+                <div className="text-left">
                   <p className="text-[10px] text-[#A8A8A8] font-mono-data mb-1">{record.aspectRatio}</p>
                   <div className="mb-1 flex flex-col gap-1">
                     <CopyableMonoValue prefix="gen" value={record.generationCode} />
@@ -127,20 +130,20 @@ export default function Gallery({ history, onDelete, onToggleFavorite, onEditIma
               key={record.id}
               className="grid grid-cols-[100px_1fr_auto] gap-4 border-t border-[#222] py-4 items-center group hover:bg-white/[0.02] transition-colors"
             >
-              <div className="group relative">
+              <div className="group relative cursor-pointer" onClick={() => openLightbox(record.imageUrl!)}>
                 <img
-                  src={record.imageUrl}
+                  src={record.imageUrl!}
                   alt={record.prompt}
                   className="w-full aspect-square object-contain bg-[#0D0D0D] block border border-[#222]"
                 />
                 <GenerationImageActions
-                  imageUrl={record.imageUrl}
+                  imageUrl={record.imageUrl!}
                   downloadName={`${record.generationCode || record.pictureId || 'vision-image'}.png`}
                   isFavorite
                   onToggleFavorite={() => onToggleFavorite(record.id)}
                   onDelete={() => onDelete(record.id)}
-                  onEditImage={() => onEditImage(record.imageUrl, record.prompt)}
-                  onZoom={() => setSelectedImage(record.imageUrl)}
+                  onEditImage={() => onEditImage(record.imageUrl!, record.prompt)}
+                  onZoom={() => openLightbox(record.imageUrl!)}
                 />
               </div>
               <div>
@@ -158,25 +161,14 @@ export default function Gallery({ history, onDelete, onToggleFavorite, onEditIma
         </div>
       )}
 
-      {/* Lightbox */}
-      {selectedImage && (
-        <div
-          className="fixed inset-0 z-[300] bg-black/95 flex items-center justify-center p-8"
-          onClick={() => setSelectedImage(null)}
-        >
-          <img
-            src={selectedImage}
-            alt=""
-            className="max-w-full max-h-full object-contain"
-            onClick={e => e.stopPropagation()}
-          />
-          <button
-            onClick={() => setSelectedImage(null)}
-            className="absolute top-6 right-6 text-[#A8A8A8] hover:text-white text-[12px] uppercase tracking-[0.2em] font-mono-data"
-          >
-            Close
-          </button>
-        </div>
+      {/* Lightbox with navigation */}
+      {lightboxIndex !== null && (
+        <Lightbox
+          images={imageUrls}
+          currentIndex={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onNavigate={setLightboxIndex}
+        />
       )}
     </div>
   );

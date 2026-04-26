@@ -1,5 +1,11 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { Zap, AlertCircle } from 'lucide-react';
+import { Zap, AlertCircle, ChevronDown, Check } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 import type { AspectRatio } from '../hooks/useGeneration';
 import type { ModelConfig } from '../pages/admin/AdminModels';
 import {
@@ -24,7 +30,6 @@ interface GenerateConsoleProps {
   modelsError: string | null;
   modelsLoading: boolean;
   referenceImageUrl?: string | null;
-  remixPrompt?: string;
   draftAspectRatio?: AspectRatio | null;
   draftStyleStrength?: number | null;
   draftEngine?: string | null;
@@ -49,7 +54,6 @@ export default function GenerateConsole({
   modelsError,
   modelsLoading,
   referenceImageUrl,
-  remixPrompt,
   draftAspectRatio,
   draftStyleStrength,
   draftEngine,
@@ -61,14 +65,27 @@ export default function GenerateConsole({
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
   const [styleStrength, setStyleStrength] = useState(75);
   const [preferredEngine, setPreferredEngine] = useState<string | null>(null);
+  const [focusPulse, setFocusPulse] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const consoleRef = useRef<HTMLDivElement>(null);
+  const prevRefUrlRef = useRef<string | null | undefined>(null);
 
+  // 改图触发：scroll + focus + 光圈动画
   useEffect(() => {
-    if (remixPrompt) {
-      setPrompt(remixPrompt);
-      textareaRef.current?.focus();
+    const wasEmpty = !prevRefUrlRef.current;
+    const isNowSet = !!referenceImageUrl;
+    prevRefUrlRef.current = referenceImageUrl ?? null;
+
+    if (wasEmpty && isNowSet) {
+      const t1 = setTimeout(() => {
+        consoleRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setFocusPulse(true);
+      }, 80);
+      const t2 = setTimeout(() => textareaRef.current?.focus(), 450);
+      const t3 = setTimeout(() => setFocusPulse(false), 1100);
+      return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
     }
-  }, [remixPrompt]);
+  }, [referenceImageUrl]);
 
   useEffect(() => {
     if (draftAspectRatio) {
@@ -146,35 +163,39 @@ export default function GenerateConsole({
   }, [availability.reason, availability.state, isLoggedIn]);
 
   return (
-    <div className="liquid-glass w-full max-w-[540px] p-6 lg:p-8">
+    <div ref={consoleRef} className={`liquid-glass w-full max-w-[540px] p-6 lg:p-8 ${focusPulse ? 'console-focus-ring' : ''}`}>
       {/* Prompt Input */}
-      {referenceImageUrl ? (
-        <div className="mb-5 border border-[#262626] bg-black/40 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[10px] text-[#A8A8A8] uppercase tracking-[0.18em] font-mono-data">
-              Edit Mode · 参考图
-            </span>
+      <div className="relative mb-6">
+        {/* 参考图：小缩略图 + 右上角叉叉，嵌在 textarea 左上 */}
+        {referenceImageUrl ? (
+          <div className="mb-3 inline-flex relative group/thumb">
+            <img
+              src={referenceImageUrl}
+              alt=""
+              className="h-14 w-14 object-cover border border-[#333] opacity-90"
+            />
             <button
               type="button"
               onClick={onClearReferenceImage}
-              className="text-[10px] text-[#666] font-mono-data uppercase tracking-[0.12em] transition-colors hover:text-white"
+              className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-[#333] border border-[#555] flex items-center justify-center text-[#aaa] hover:bg-white hover:text-black hover:border-white transition-all z-10"
+              aria-label="清除参考图"
             >
-              清除
+              <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                <path d="M1 1l6 6M7 1L1 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
             </button>
           </div>
-          <img
-            src={referenceImageUrl}
-            alt=""
-            className="h-20 w-20 border border-[#333] object-cover"
-          />
-        </div>
-      ) : null}
-
-      <div className="relative mb-6">
+        ) : null}
         <textarea
           ref={textareaRef}
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
+          onKeyDown={e => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+              e.preventDefault();
+              void handleGenerate();
+            }
+          }}
           placeholder="输入你的梦境，或是一个荒诞的指令..."
           className="w-full min-h-[80px] resize-none bg-transparent text-[15px] leading-relaxed text-white caret-white placeholder:text-[14px] placeholder:text-[#4D4D4D] focus:outline-none"
           rows={3}
@@ -228,32 +249,40 @@ export default function GenerateConsole({
           <label className="block text-[10px] text-[#A8A8A8] uppercase tracking-[0.18em] mb-2.5 font-mono-data">
             Engine · 生成引擎
           </label>
-          <select
-            value={engine}
-            onChange={e => setPreferredEngine(e.target.value)}
-            disabled={modelsLoading || !!modelsError || enabledModels.length === 0}
-            className="w-full bg-transparent border border-[#262626] text-white text-[12px] px-3 py-2.5 focus:border-white focus:outline-none appearance-none cursor-pointer font-mono-data disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {modelsLoading && (
-              <option value="loading" className="bg-black text-white">加载中...</option>
-            )}
-            {modelsError && (
-              <option value="error" className="bg-black text-white">服务异常</option>
-            )}
-            {enabledModels.length === 0 && !modelsLoading && !modelsError && (
-              <option value="gpt-image-2" className="bg-black text-white">gpt-image-2</option>
-            )}
-            {enabledModels.map(m => (
-              <option key={m.id} value={m.id} className="bg-black text-white">
-                {m.name}
-              </option>
-            ))}
-          </select>
-          {modelsError && (
+          {modelsError ? (
             <div className="mt-2 flex items-center gap-1.5 text-red-400 text-[11px]">
               <AlertCircle size={12} />
               <span className="font-mono-data">{modelsError}</span>
             </div>
+          ) : (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={modelsLoading || enabledModels.length === 0}
+                className="w-full flex items-center justify-between bg-transparent border border-[#262626] px-3 py-2.5 text-[12px] font-mono-data text-[#A8A8A8] disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none transition-all hover:border-[#4D4D4D] hover:text-white data-[state=open]:border-[#4D4D4D] data-[state=open]:text-white"
+              >
+                <span>
+                  {modelsLoading
+                    ? '加载中...'
+                    : enabledModels.find(m => m.id === engine)?.name || engine}
+                </span>
+                <ChevronDown size={13} className="shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+                {enabledModels.map(m => (
+                  <DropdownMenuItem
+                    key={m.id}
+                    onClick={() => setPreferredEngine(m.id)}
+                    className="flex items-center justify-between"
+                  >
+                    <span>{m.name}</span>
+                    {m.id === engine && <Check size={12} className="text-white" />}
+                  </DropdownMenuItem>
+                ))}
+                {enabledModels.length === 0 && !modelsLoading && (
+                  <DropdownMenuItem disabled>无可用模型</DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>
