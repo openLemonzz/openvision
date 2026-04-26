@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { AddressInfo } from 'node:net';
 
+import * as serverApp from '../server/app.js';
 import { createApp, type ServerDependencies } from '../server/app.js';
 import { encryptSecret } from '../server/crypto.js';
 
@@ -31,6 +32,13 @@ async function withTestServer(
     });
   }
 }
+
+test('default upstream generation request timeout is 20 minutes', () => {
+  assert.equal(
+    (serverApp as { DEFAULT_GENERATION_REQUEST_TIMEOUT_MS?: number }).DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+    20 * 60 * 1000
+  );
+});
 
 test('GET /api/me returns the authenticated user profile fields used by web', async () => {
   const dependencies: ServerDependencies = {
@@ -340,7 +348,7 @@ test('DELETE /api/models/:id deletes a saved model config', async () => {
   });
 });
 
-test('POST /api/models/:id/test checks a saved model config against the upstream provider', async () => {
+test('POST /api/models/:id/test generates an admin-owned preview image', async () => {
   const configCryptKey = '00112233445566778899aabbccddeeff';
   const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
   let upstreamRequestBody: Record<string, unknown> | null = null;
@@ -370,6 +378,38 @@ test('POST /api/models/:id/test checks a saved model config against the upstream
         };
       }
 
+      if (sql.includes('insert into public.generations')) {
+        assert.equal(params?.length, 6);
+        assert.deepEqual(params?.slice(0, 5), [
+          'admin-1',
+          'openai-fast availability test image',
+          '3:4',
+          75,
+          'openai-fast',
+        ]);
+        assert.match(String(params?.[5]), /^gen_\d{13}_[a-z0-9]{6}$/);
+        return {
+          rows: [{ id: 'admin-test-generation-1', generation_code: params?.[5] }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('set status = \'generating\'')) {
+        assert.deepEqual(params, ['admin-test-generation-1', 'admin-1']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'completed\'')) {
+        assert.deepEqual(params?.slice(0, 4), [
+          'admin-test-generation-1',
+          'admin-1',
+          'https://cdn.example.com/admin-1/img_1713873600000_777777.png',
+          'img_1713873600000_777777',
+        ]);
+        assert.match(String(params?.[4]), /^\d{4}-\d{2}-\d{2}T/);
+        return { rows: [], rowCount: 1 };
+      }
+
       throw new Error(`Unexpected query: ${sql}`);
     },
     fetch: async (input, init) => {
@@ -385,29 +425,69 @@ test('POST /api/models/:id/test checks a saved model config against the upstream
         },
       });
     },
+    getStorageClient: async () => ({
+      storage: {
+        from: (bucket: string) => {
+          assert.equal(bucket, 'images');
+          return {
+            upload: async (filePath: string, body: Uint8Array, options: { contentType: string; upsert: boolean }) => {
+              assert.equal(filePath, 'admin-1/img_1713873600000_777777.png');
+              assert.equal(body instanceof Uint8Array, true);
+              assert.deepEqual(options, {
+                contentType: 'image/png',
+                upsert: true,
+              });
+              return { error: null };
+            },
+            getPublicUrl: (filePath: string) => {
+              assert.equal(filePath, 'admin-1/img_1713873600000_777777.png');
+              return {
+                data: {
+                  publicUrl: 'https://cdn.example.com/admin-1/img_1713873600000_777777.png',
+                },
+              };
+            },
+          };
+        },
+      },
+    }) as Awaited<ReturnType<NonNullable<ServerDependencies['getStorageClient']>>>,
   };
 
-  await withTestServer(dependencies, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/models/openai-fast/test`, {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer admin-token',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({}),
-    });
+  const originalDateNow = Date.now;
+  const originalRandom = Math.random;
+  const randomValues = [0.1, 0.2];
+  let randomCallCount = 0;
 
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      ok: true,
-      status: 200,
-      message: 'Model test succeeded',
+  Date.now = () => 1713873600000;
+  Math.random = () => randomValues[randomCallCount++] ?? 0.3;
+
+  try {
+    await withTestServer(dependencies, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/models/openai-fast/test`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer admin-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        ok: true,
+        status: 200,
+        message: 'Model test succeeded',
+        imageUrl: 'https://cdn.example.com/admin-1/img_1713873600000_777777.png',
+      });
     });
-  });
+  } finally {
+    Date.now = originalDateNow;
+    Math.random = originalRandom;
+  }
 
   assert.deepEqual(upstreamRequestBody, {
     model: 'gpt-image-2',
-    prompt: 'availability test',
+    prompt: 'openai-fast availability test image',
     n: 1,
     size: '768x1024',
   });
@@ -440,6 +520,35 @@ test('POST /api/models/:id/test returns upstream diagnostics without saving imag
           }],
           rowCount: 1,
         };
+      }
+
+      if (sql.includes('insert into public.generations')) {
+        assert.deepEqual(params?.slice(0, 5), [
+          'admin-1',
+          'openai-fast availability test image',
+          '1:1',
+          75,
+          'openai-fast',
+        ]);
+        return {
+          rows: [{ id: 'admin-test-failed-1', generation_code: params?.[5] }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('set status = \'generating\'')) {
+        assert.deepEqual(params, ['admin-test-failed-1', 'admin-1']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'failed\'')) {
+        assert.deepEqual(params?.slice(0, 3), [
+          'admin-test-failed-1',
+          'admin-1',
+          'Upstream failed: 401',
+        ]);
+        assert.equal(params?.[3], 'Upstream failed with status 401: {"error":"invalid api key"}');
+        return { rows: [], rowCount: 1 };
       }
 
       throw new Error(`Unexpected query: ${sql}`);

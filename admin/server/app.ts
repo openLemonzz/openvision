@@ -29,6 +29,8 @@ export interface ServerDependencies {
   imageDownloadRetryBaseDelayMs?: number;
 }
 
+export const DEFAULT_GENERATION_REQUEST_TIMEOUT_MS = 20 * 60 * 1000;
+
 function asyncHandler(
   handler: (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<unknown>
 ): express.RequestHandler {
@@ -122,8 +124,21 @@ function parseImageSize(size: unknown) {
   return { value, width, height };
 }
 
-function buildModelAvailabilityRequest(model: Record<string, unknown>) {
-  const prompt = 'availability test';
+function resolveAspectRatioFromSize(size: unknown) {
+  const { width, height } = parseImageSize(size);
+
+  if (width > height) {
+    return '16:9';
+  }
+
+  if (height > width) {
+    return height / width > 1.45 ? '9:16' : '3:4';
+  }
+
+  return '1:1';
+}
+
+function buildModelAvailabilityRequest(model: Record<string, unknown>, prompt = 'availability test') {
   const protocol = String(model.protocol || 'openai');
   const upstreamModelId = String(model.request_model_id || model.id);
   const size = parseImageSize(model.default_size);
@@ -301,7 +316,7 @@ export function createApp({
   port = config.port,
   configCryptKey = config.configCryptKey,
   missingConfig = [],
-  generationRequestTimeoutMs = 45000,
+  generationRequestTimeoutMs = DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
   imageDownloadTimeoutMs = 15000,
   imageDownloadRetryCount = 1,
   imageDownloadRetryBaseDelayMs = 250,
@@ -445,6 +460,89 @@ export function createApp({
         truncateDiagnosticText(errorDetails),
       ]
     );
+  }
+
+  async function resolveGeneratedImageBuffer(
+    payload: {
+      data?: Array<{ url?: string; b64_json?: string }>;
+      url?: string;
+      image_url?: string;
+      imageUrl?: string;
+    },
+    modelApiEndpoint: string,
+    apiKey: string,
+  ) {
+    if (payload.data?.[0]?.b64_json) {
+      return Uint8Array.from(Buffer.from(payload.data[0].b64_json, 'base64'));
+    }
+
+    const imageUrl =
+      payload.data?.[0]?.url ||
+      payload.url ||
+      payload.image_url ||
+      payload.imageUrl ||
+      null;
+
+    if (!imageUrl) {
+      return null;
+    }
+
+    const resolvedImageUrl = resolveRelativeUrl(modelApiEndpoint, imageUrl);
+    const imageResponse = await fetchWithRetry(
+      fetchImpl,
+      resolvedImageUrl,
+      sharesOrigin(modelApiEndpoint, resolvedImageUrl)
+        ? {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+            },
+          }
+        : {},
+      imageDownloadTimeoutMs,
+      imageDownloadRetryCount,
+      imageDownloadRetryBaseDelayMs,
+    );
+
+    if (!imageResponse.ok) {
+      const responseBody = truncateDiagnosticText(await imageResponse.text());
+      throw new Error(
+        responseBody
+          ? `Generated image download failed with status ${imageResponse.status}: ${responseBody}`
+          : `Generated image download failed with status ${imageResponse.status}`
+      );
+    }
+
+    return new Uint8Array(await imageResponse.arrayBuffer());
+  }
+
+  async function uploadGeneratedImage(userId: string, imageBuffer: Uint8Array) {
+    const storageClient = await getStorageClient();
+    if (!storageClient) {
+      throw new Error(`Missing server config: ${missingConfig.join(', ')}`);
+    }
+
+    const pictureId = generateBusinessCode('img');
+    const filePath = `${userId}/${pictureId}.png`;
+    const { error: uploadError } = await storageClient.storage
+      .from('images')
+      .upload(filePath, imageBuffer, {
+        contentType: 'image/png',
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(`Storage upload failed: ${truncateDiagnosticText(uploadError) ?? 'unknown error'}`);
+    }
+
+    const { data: urlData } = storageClient.storage.from('images').getPublicUrl(filePath);
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    return {
+      pictureId,
+      publicUrl: urlData.publicUrl,
+      expiresAt,
+    };
   }
 
   async function loadWebMe(userId: string) {
@@ -744,7 +842,7 @@ export function createApp({
     res.status(204).end();
   }));
 
-  app.post('/api/models/:id/test', requireAdmin, asyncHandler(async (req, res) => {
+  app.post('/api/models/:id/test', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res) => {
     if (!ensureServerRuntime(res)) return;
 
     const currentId = String(req.params.id);
@@ -801,6 +899,29 @@ export function createApp({
       return;
     }
 
+    const adminUserId = req.authUser!.id;
+    const testModelId = String(testModel.id);
+    const testPrompt = `${testModelId} availability test image`;
+    const testAspectRatio = resolveAspectRatioFromSize(testModel.default_size);
+    const generationCode = generateBusinessCode('gen');
+    const { rows: inserted } = await query!(
+      `insert into public.generations
+         (user_id, prompt, aspect_ratio, style_strength, engine, generation_code, status, picture_lifecycle)
+       values
+         ($1, $2, $3, $4, $5, $6, 'pending', 'pending')
+       returning id, generation_code`,
+      [adminUserId, testPrompt, testAspectRatio, 75, testModelId, generationCode]
+    );
+
+    const generationId = String(inserted[0].id);
+
+    await query!(
+      `update public.generations
+          set status = 'generating', picture_lifecycle = 'generating'
+        where id = $1 and user_id = $2`,
+      [generationId, adminUserId]
+    );
+
     let apiResponse: globalThis.Response;
     try {
       apiResponse = await fetchWithTimeout(
@@ -812,16 +933,19 @@ export function createApp({
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(buildModelAvailabilityRequest(testModel)),
+          body: JSON.stringify(buildModelAvailabilityRequest(testModel, testPrompt)),
         },
         generationRequestTimeoutMs,
       );
     } catch (error) {
       if (isAbortError(error)) {
+        const errorMessage = 'Upstream request timed out';
+        const errorDetails = `Upstream request to provider timed out after ${generationRequestTimeoutMs}ms`;
+        await markGenerationFailed(generationId, adminUserId, errorMessage, errorDetails);
         res.json({
           ok: false,
-          message: 'Upstream request timed out',
-          details: `Upstream request to provider timed out after ${generationRequestTimeoutMs}ms`,
+          message: errorMessage,
+          details: errorDetails,
         });
         return;
       }
@@ -830,19 +954,95 @@ export function createApp({
     }
 
     if (!apiResponse.ok) {
+      const errorMessage = `Upstream failed: ${apiResponse.status}`;
+      const responseBody = truncateDiagnosticText(await apiResponse.text());
+      const errorDetails = responseBody
+        ? `Upstream failed with status ${apiResponse.status}: ${responseBody}`
+        : `Upstream failed with status ${apiResponse.status}`;
+      await markGenerationFailed(generationId, adminUserId, errorMessage, errorDetails);
       res.json({
         ok: false,
         status: apiResponse.status,
-        message: `Upstream failed: ${apiResponse.status}`,
-        details: truncateDiagnosticText(await apiResponse.text()),
+        message: errorMessage,
+        details: responseBody,
       });
       return;
     }
+
+    const payload = await apiResponse.json() as {
+      data?: Array<{ url?: string; b64_json?: string }>;
+      url?: string;
+      image_url?: string;
+      imageUrl?: string;
+    };
+
+    let imageBuffer: Uint8Array | null = null;
+    try {
+      imageBuffer = await resolveGeneratedImageBuffer(payload, String(testModel.api_endpoint), apiKey);
+    } catch (error) {
+      const errorMessage = isAbortError(error)
+        ? 'Generated image download timed out'
+        : 'Failed to download generated image';
+      const errorDetails = isAbortError(error)
+        ? `Generated image download timed out after ${imageDownloadTimeoutMs}ms`
+        : error instanceof Error
+        ? error.message
+        : String(error);
+      await markGenerationFailed(generationId, adminUserId, errorMessage, errorDetails);
+      res.json({
+        ok: false,
+        status: apiResponse.status,
+        message: errorMessage,
+        details: errorDetails,
+      });
+      return;
+    }
+
+    if (!imageBuffer) {
+      const errorMessage = 'No image returned from provider';
+      const errorDetails = 'Provider response did not contain an image URL or base64 payload';
+      await markGenerationFailed(generationId, adminUserId, errorMessage, errorDetails);
+      res.json({
+        ok: false,
+        status: apiResponse.status,
+        message: errorMessage,
+        details: errorDetails,
+      });
+      return;
+    }
+
+    let uploadedImage: Awaited<ReturnType<typeof uploadGeneratedImage>>;
+    try {
+      uploadedImage = await uploadGeneratedImage(adminUserId, imageBuffer);
+    } catch (error) {
+      const errorMessage = 'Failed to upload image';
+      const errorDetails = error instanceof Error ? error.message : String(error);
+      await markGenerationFailed(generationId, adminUserId, errorMessage, errorDetails);
+      res.json({
+        ok: false,
+        status: apiResponse.status,
+        message: errorMessage,
+        details: errorDetails,
+      });
+      return;
+    }
+
+    await query!(
+      `update public.generations
+          set status = 'completed',
+              image_url = $3,
+              picture_id = $4,
+              picture_expires_at = $5,
+              picture_lifecycle = 'active'
+        where id = $1 and user_id = $2`,
+      [generationId, adminUserId, uploadedImage.publicUrl, uploadedImage.pictureId, uploadedImage.expiresAt.toISOString()]
+    );
 
     res.json({
       ok: true,
       status: apiResponse.status,
       message: 'Model test succeeded',
+      imageUrl: uploadedImage.publicUrl,
     });
   }));
 

@@ -8,6 +8,16 @@ export interface EditableModelConfig extends ModelConfig {
 const DEFAULT_API_ENDPOINT = 'https://api.example.com/v1/images/generations';
 const DEFAULT_PROVIDER = 'Custom API';
 
+function generateModelConfigId(existingIds: Set<string>) {
+  let candidate = '';
+
+  do {
+    candidate = `mod_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  } while (existingIds.has(candidate));
+
+  return candidate;
+}
+
 export function createEditableModels(models: ModelConfig[]): EditableModelConfig[] {
   return models.map((model) => ({
     ...model,
@@ -24,20 +34,15 @@ export function createModelDraft(models: EditableModelConfig[]): EditableModelCo
     nextDraftNumber += 1;
   }
 
-  let nextModelNumber = 1;
   const existingIds = new Set(models.map((model) => model.id.trim()));
-  while (existingIds.has(`new-model-${nextModelNumber}`)) {
-    nextModelNumber += 1;
-  }
-
-  const nextModelId = `new-model-${nextModelNumber}`;
+  const nextModelId = generateModelConfigId(existingIds);
 
   return {
     draftKey: `draft:${nextDraftNumber}`,
     isNew: true,
     id: nextModelId,
     requestModelId: nextModelId,
-    name: `新模型 ${nextModelNumber}`,
+    name: `新模型 ${nextDraftNumber}`,
     provider: DEFAULT_PROVIDER,
     apiKey: '',
     apiEndpoint: DEFAULT_API_ENDPOINT,

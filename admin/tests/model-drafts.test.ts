@@ -7,7 +7,7 @@ import {
   type EditableModelConfig,
 } from '../src/pages/admin/model-drafts';
 
-test('createModelDraft creates a new editable model with unique draft key and sensible defaults', () => {
+test('createModelDraft creates a new editable model with a generated mod id and sensible defaults', () => {
   const existing: EditableModelConfig[] = [
     {
       draftKey: 'existing:gpt-image-2',
@@ -28,8 +28,8 @@ test('createModelDraft creates a new editable model with unique draft key and se
     {
       draftKey: 'draft:1',
       isNew: true,
-      id: 'new-model-1',
-      requestModelId: 'new-model-1',
+      id: 'mod_1713873600000_3lllll',
+      requestModelId: 'mod_1713873600000_3lllll',
       name: '新模型 1',
       provider: 'Custom API',
       apiKey: '',
@@ -42,11 +42,25 @@ test('createModelDraft creates a new editable model with unique draft key and se
     },
   ];
 
-  const draft = createModelDraft(existing);
+  const originalDateNow = Date.now;
+  const originalRandom = Math.random;
+  const randomValues = [0.1, 0.2];
+  let randomCallCount = 0;
+
+  Date.now = () => 1713873600000;
+  Math.random = () => randomValues[randomCallCount++] ?? 0.3;
+
+  let draft: EditableModelConfig;
+  try {
+    draft = createModelDraft(existing);
+  } finally {
+    Date.now = originalDateNow;
+    Math.random = originalRandom;
+  }
 
   assert.equal(draft.draftKey, 'draft:2');
-  assert.equal(draft.id, 'new-model-2');
-  assert.equal(draft.requestModelId, 'new-model-2');
+  assert.equal(draft.id, 'mod_1713873600000_777777');
+  assert.equal(draft.requestModelId, draft.id);
   assert.equal(draft.name, '新模型 2');
   assert.equal(draft.provider, 'Custom API');
   assert.equal(draft.apiEndpoint, 'https://api.example.com/v1/images/generations');

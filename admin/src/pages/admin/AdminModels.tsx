@@ -241,17 +241,17 @@ export default function AdminModels({ models, onUpdateModels, onDeleteModel, onT
                     <ToggleLeft size={20} className="text-[#444]" />
                   )}
                 </button>
-                <div>
-                  <h3 className="text-[13px] text-white">{model.name}</h3>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <p className="text-[9px] text-[#666] font-mono-data">{model.provider}</p>
-                    <span className="text-[8px] text-[#555] font-mono-data px-1.5 py-0.5 border border-[#333] bg-[#1a1a1a]">
-                      {PROTOCOL_OPTIONS.find(p => p.value === model.protocol)?.label || model.protocol}
-                    </span>
-                    <span className="text-[8px] text-[#444] font-mono-data">配置: {model.id}</span>
-                    <span className="text-[8px] text-[#444] font-mono-data">请求: {model.requestModelId}</span>
-                  </div>
-                </div>
+	                <div>
+	                  <h3 className="text-[13px] text-white">{model.name}</h3>
+	                  <div className="flex items-center gap-2 mt-0.5">
+	                    <span className="text-[8px] text-[#444] font-mono-data">配置: {model.id}</span>
+	                    <p className="text-[9px] text-[#666] font-mono-data">{model.provider}</p>
+	                    <span className="text-[8px] text-[#555] font-mono-data px-1.5 py-0.5 border border-[#333] bg-[#1a1a1a]">
+	                      {PROTOCOL_OPTIONS.find(p => p.value === model.protocol)?.label || model.protocol}
+	                    </span>
+	                    <span className="text-[8px] text-[#444] font-mono-data">请求: {model.requestModelId}</span>
+	                  </div>
+	                </div>
               </div>
               <div className="flex items-center gap-3">
                 <button
@@ -288,12 +288,14 @@ export default function AdminModels({ models, onUpdateModels, onDeleteModel, onT
             {testResults[model.draftKey] && (
               <div className={`px-5 py-2 border-b border-[#222] text-[10px] font-mono-data ${
                 testResults[model.draftKey].ok
-                  ? 'text-emerald-300 bg-emerald-400/5'
-                  : 'text-red-200 bg-red-400/5'
-              }`}>
-                <span>
-                  {testResults[model.draftKey].ok ? '测试通过' : '测试失败'}
-                </span>
+	                  ? 'text-emerald-300 bg-emerald-400/5'
+	                  : 'text-red-200 bg-red-400/5'
+	              }`}>
+	                <span className="text-[#777]">{model.id}</span>
+	                <span className="text-[#777] mx-2">/</span>
+	                <span>
+	                  {testResults[model.draftKey].ok ? '测试通过' : '测试失败'}
+	                </span>
                 <span className="text-[#777] mx-2">/</span>
                 <span>{testResults[model.draftKey].message}</span>
                 {typeof testResults[model.draftKey].status !== 'undefined' && (
@@ -301,11 +303,20 @@ export default function AdminModels({ models, onUpdateModels, onDeleteModel, onT
                 )}
                 {testResults[model.draftKey].details && (
                   <div className="text-[#888] mt-1 break-all">
-                    {testResults[model.draftKey].details}
-                  </div>
-                )}
-              </div>
-            )}
+	                    {testResults[model.draftKey].details}
+	                  </div>
+	                )}
+	                {testResults[model.draftKey].imageUrl && (
+	                  <div className="mt-3 max-w-[220px] border border-[#222] bg-black">
+	                    <img
+	                      src={testResults[model.draftKey].imageUrl}
+	                      alt={`${model.id} test preview`}
+	                      className="block aspect-square w-full object-cover"
+	                    />
+	                  </div>
+	                )}
+	              </div>
+	            )}
 
             {/* Card body */}
             <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -332,7 +343,7 @@ export default function AdminModels({ models, onUpdateModels, onDeleteModel, onT
                   type="text"
                   value={model.id}
                   readOnly
-                  placeholder="new-model-1"
+                  placeholder="mod_1713873600000_ab12cd"
                   className="w-full bg-[#0b0b0b] border border-[#222] text-[#777] text-[12px] px-3 py-2.5 focus:outline-none placeholder:text-[#444] font-mono-data"
                 />
               </div>

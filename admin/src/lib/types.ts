@@ -32,6 +32,7 @@ export interface ModelTestResult {
   status?: number;
   message: string;
   details?: string | null;
+  imageUrl?: string | null;
 }
 
 export interface GenerationRecord {
