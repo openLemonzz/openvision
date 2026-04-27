@@ -30,6 +30,50 @@ export interface ServerDependencies {
 }
 
 export const DEFAULT_GENERATION_REQUEST_TIMEOUT_MS = 20 * 60 * 1000;
+const OPENAI_SAFE_IMAGE_SIZE = '1024x1024';
+const OPENAI_IMAGE_SIZE_BY_ASPECT_RATIO: Record<string, string> = {
+  '1:1': OPENAI_SAFE_IMAGE_SIZE,
+  '16:9': '1536x1024',
+  '3:4': '1024x1536',
+  '9:16': '1024x1536',
+};
+const STABILITY_IMAGE_SIZE_BY_ASPECT_RATIO: Record<string, string> = {
+  '1:1': '1024x1024',
+  '16:9': '1024x576',
+  '3:4': '768x1024',
+  '9:16': '576x1024',
+};
+
+type ModelTestState = 'running' | 'completed' | 'failed';
+
+type ModelTestDiagnostics = {
+  endpoint: string;
+  body: unknown;
+};
+
+type ModelTestProviderResponse = {
+  status?: number;
+  body?: string | null;
+};
+
+type ModelTestJobResult = {
+  ok: boolean;
+  state: ModelTestState;
+  jobId: string;
+  message: string;
+  status?: number;
+  details?: string | null;
+  imageUrl?: string | null;
+  request?: ModelTestDiagnostics;
+  response?: ModelTestProviderResponse;
+};
+
+type ModelTestJobRecord = ModelTestJobResult & {
+  modelId: string;
+  ownerId: string;
+  createdAt: number;
+  updatedAt: number;
+};
 
 function asyncHandler(
   handler: (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<unknown>
@@ -58,7 +102,7 @@ function mapGenerationRow(row: Record<string, unknown>) {
   };
 }
 
-function generateBusinessCode(prefix: 'gen' | 'img') {
+function generateBusinessCode(prefix: 'gen' | 'img' | 'job') {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
@@ -93,26 +137,12 @@ function resolveImageEditApiEndpoint(apiEndpoint: string) {
   return apiEndpoint.replace(/\/images\/generations(?=\/?$)/, '/images/edits');
 }
 
-function resolveGenerationSize(aspectRatio: string) {
-  const sizeMap: Record<string, string> = {
-    '1:1': '1024x1024',
-    '16:9': '1024x576',
-    '3:4': '768x1024',
-    '9:16': '576x1024',
-  };
-
-  return sizeMap[aspectRatio] || '1024x1024';
+function resolveOpenAIImageSize(aspectRatio: string) {
+  return OPENAI_IMAGE_SIZE_BY_ASPECT_RATIO[aspectRatio] || OPENAI_SAFE_IMAGE_SIZE;
 }
 
-function resolveEditSize(aspectRatio: string) {
-  const sizeMap: Record<string, string> = {
-    '1:1': '1024x1024',
-    '16:9': '1536x1024',
-    '3:4': '1024x1536',
-    '9:16': '1024x1536',
-  };
-
-  return sizeMap[aspectRatio] || '1024x1024';
+function resolveStabilityImageSize(aspectRatio: string) {
+  return STABILITY_IMAGE_SIZE_BY_ASPECT_RATIO[aspectRatio] || STABILITY_IMAGE_SIZE_BY_ASPECT_RATIO['1:1'];
 }
 
 function parseImageSize(size: unknown) {
@@ -122,20 +152,6 @@ function parseImageSize(size: unknown) {
   const [width, height] = value.split('x').map(Number);
 
   return { value, width, height };
-}
-
-function resolveAspectRatioFromSize(size: unknown) {
-  const { width, height } = parseImageSize(size);
-
-  if (width > height) {
-    return '16:9';
-  }
-
-  if (height > width) {
-    return height / width > 1.45 ? '9:16' : '3:4';
-  }
-
-  return '1:1';
 }
 
 function buildModelAvailabilityRequest(model: Record<string, unknown>, prompt = 'availability test') {
@@ -545,6 +561,208 @@ export function createApp({
     };
   }
 
+  const modelTestJobs = new Map<string, ModelTestJobRecord>();
+
+  function pruneModelTestJobs() {
+    const expiresBefore = Date.now() - 60 * 60 * 1000;
+    for (const [jobId, job] of modelTestJobs.entries()) {
+      if (job.updatedAt < expiresBefore) {
+        modelTestJobs.delete(jobId);
+      }
+    }
+  }
+
+  function updateModelTestJob(jobId: string, updates: Omit<Partial<ModelTestJobResult>, 'jobId'>) {
+    const currentJob = modelTestJobs.get(jobId);
+    if (!currentJob) {
+      return;
+    }
+
+    modelTestJobs.set(jobId, {
+      ...currentJob,
+      ...updates,
+      updatedAt: Date.now(),
+    });
+  }
+
+  async function runModelTestJob(jobId: string, adminUserId: string, testModel: Record<string, unknown>, apiKey: string) {
+    const testModelId = String(testModel.id);
+    const testPrompt = `${testModelId} availability test image`;
+    const testModelForRequest = {
+      ...testModel,
+      default_size: OPENAI_SAFE_IMAGE_SIZE,
+    };
+    const requestBody = buildModelAvailabilityRequest(testModelForRequest, testPrompt);
+    const requestDiagnostics: ModelTestDiagnostics = {
+      endpoint: String(testModel.api_endpoint),
+      body: requestBody,
+    };
+    let generationId: string | null = null;
+
+    async function failJob(
+      message: string,
+      details: string | null,
+      status?: number,
+      response?: ModelTestProviderResponse,
+      persistedDetails = details,
+    ) {
+      if (generationId) {
+        await markGenerationFailed(generationId, adminUserId, message, persistedDetails);
+      }
+
+      updateModelTestJob(jobId, {
+        ok: false,
+        state: 'failed',
+        message,
+        status,
+        details,
+        request: requestDiagnostics,
+        response,
+      });
+    }
+
+    try {
+      const generationCode = generateBusinessCode('gen');
+      const { rows: inserted } = await query!(
+        `insert into public.generations
+           (user_id, prompt, aspect_ratio, style_strength, engine, generation_code, status, picture_lifecycle)
+         values
+           ($1, $2, $3, $4, $5, $6, 'pending', 'pending')
+         returning id, generation_code`,
+        [adminUserId, testPrompt, '1:1', 75, testModelId, generationCode]
+      );
+
+      generationId = String(inserted[0].id);
+
+      await query!(
+        `update public.generations
+            set status = 'generating', picture_lifecycle = 'generating'
+          where id = $1 and user_id = $2`,
+        [generationId, adminUserId]
+      );
+
+      let apiResponse: globalThis.Response;
+      try {
+        apiResponse = await fetchWithTimeout(
+          fetchImpl,
+          requestDiagnostics.endpoint,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestBody),
+          },
+          generationRequestTimeoutMs,
+        );
+      } catch (error) {
+        if (isAbortError(error)) {
+          await failJob(
+            'Upstream request timed out',
+            `Upstream request to provider timed out after ${generationRequestTimeoutMs}ms`,
+          );
+          return;
+        }
+
+        throw error;
+      }
+
+      const rawResponseBody = await apiResponse.text();
+      const responseBody = truncateDiagnosticText(rawResponseBody);
+      const responseDiagnostics: ModelTestProviderResponse = {
+        status: apiResponse.status,
+        body: responseBody,
+      };
+
+      if (!apiResponse.ok) {
+        const errorMessage = `Upstream failed: ${apiResponse.status}`;
+        const errorDetails = responseBody
+          ? `Upstream failed with status ${apiResponse.status}: ${responseBody}`
+          : `Upstream failed with status ${apiResponse.status}`;
+        await failJob(errorMessage, responseBody, apiResponse.status, responseDiagnostics, errorDetails);
+        return;
+      }
+
+      let payload: {
+        data?: Array<{ url?: string; b64_json?: string }>;
+        url?: string;
+        image_url?: string;
+        imageUrl?: string;
+      };
+
+      try {
+        payload = rawResponseBody ? JSON.parse(rawResponseBody) as typeof payload : {};
+      } catch {
+        await failJob(
+          'Invalid provider response',
+          responseBody
+            ? `Provider response was not valid JSON: ${responseBody}`
+            : 'Provider response was not valid JSON',
+          apiResponse.status,
+          responseDiagnostics,
+        );
+        return;
+      }
+
+      let imageBuffer: Uint8Array | null = null;
+      try {
+        imageBuffer = await resolveGeneratedImageBuffer(payload, requestDiagnostics.endpoint, apiKey);
+      } catch (error) {
+        const errorMessage = isAbortError(error)
+          ? 'Generated image download timed out'
+          : 'Failed to download generated image';
+        const errorDetails = isAbortError(error)
+          ? `Generated image download timed out after ${imageDownloadTimeoutMs}ms`
+          : error instanceof Error
+          ? error.message
+          : String(error);
+        await failJob(errorMessage, errorDetails, apiResponse.status, responseDiagnostics);
+        return;
+      }
+
+      if (!imageBuffer) {
+        const errorMessage = 'No image returned from provider';
+        const errorDetails = responseBody
+          ? `Provider response did not contain an image URL or base64 payload: ${responseBody}`
+          : 'Provider response did not contain an image URL or base64 payload';
+        await failJob(errorMessage, errorDetails, apiResponse.status, responseDiagnostics);
+        return;
+      }
+
+      let uploadedImage: Awaited<ReturnType<typeof uploadGeneratedImage>>;
+      try {
+        uploadedImage = await uploadGeneratedImage(adminUserId, imageBuffer);
+      } catch (error) {
+        const errorDetails = error instanceof Error ? error.message : String(error);
+        await failJob('Failed to upload image', errorDetails, apiResponse.status, responseDiagnostics);
+        return;
+      }
+
+      await query!(
+        `update public.generations
+            set status = 'completed',
+                image_url = $3,
+                picture_id = $4,
+                picture_expires_at = $5,
+                picture_lifecycle = 'active'
+          where id = $1 and user_id = $2`,
+        [generationId, adminUserId, uploadedImage.publicUrl, uploadedImage.pictureId, uploadedImage.expiresAt.toISOString()]
+      );
+
+      updateModelTestJob(jobId, {
+        ok: true,
+        state: 'completed',
+        status: apiResponse.status,
+        message: 'Model test succeeded',
+        imageUrl: uploadedImage.publicUrl,
+      });
+    } catch (error) {
+      const errorDetails = error instanceof Error ? error.message : String(error);
+      await failJob('Model test crashed', errorDetails);
+    }
+  }
+
   async function loadWebMe(userId: string) {
     if (!query) {
       return null;
@@ -899,150 +1117,51 @@ export function createApp({
       return;
     }
 
-    const adminUserId = req.authUser!.id;
-    const testModelId = String(testModel.id);
-    const testPrompt = `${testModelId} availability test image`;
-    const testAspectRatio = resolveAspectRatioFromSize(testModel.default_size);
-    const generationCode = generateBusinessCode('gen');
-    const { rows: inserted } = await query!(
-      `insert into public.generations
-         (user_id, prompt, aspect_ratio, style_strength, engine, generation_code, status, picture_lifecycle)
-       values
-         ($1, $2, $3, $4, $5, $6, 'pending', 'pending')
-       returning id, generation_code`,
-      [adminUserId, testPrompt, testAspectRatio, 75, testModelId, generationCode]
-    );
-
-    const generationId = String(inserted[0].id);
-
-    await query!(
-      `update public.generations
-          set status = 'generating', picture_lifecycle = 'generating'
-        where id = $1 and user_id = $2`,
-      [generationId, adminUserId]
-    );
-
-    let apiResponse: globalThis.Response;
-    try {
-      apiResponse = await fetchWithTimeout(
-        fetchImpl,
-        String(testModel.api_endpoint),
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(buildModelAvailabilityRequest(testModel, testPrompt)),
-        },
-        generationRequestTimeoutMs,
-      );
-    } catch (error) {
-      if (isAbortError(error)) {
-        const errorMessage = 'Upstream request timed out';
-        const errorDetails = `Upstream request to provider timed out after ${generationRequestTimeoutMs}ms`;
-        await markGenerationFailed(generationId, adminUserId, errorMessage, errorDetails);
-        res.json({
-          ok: false,
-          message: errorMessage,
-          details: errorDetails,
-        });
-        return;
-      }
-
-      throw error;
-    }
-
-    if (!apiResponse.ok) {
-      const errorMessage = `Upstream failed: ${apiResponse.status}`;
-      const responseBody = truncateDiagnosticText(await apiResponse.text());
-      const errorDetails = responseBody
-        ? `Upstream failed with status ${apiResponse.status}: ${responseBody}`
-        : `Upstream failed with status ${apiResponse.status}`;
-      await markGenerationFailed(generationId, adminUserId, errorMessage, errorDetails);
-      res.json({
-        ok: false,
-        status: apiResponse.status,
-        message: errorMessage,
-        details: responseBody,
-      });
-      return;
-    }
-
-    const payload = await apiResponse.json() as {
-      data?: Array<{ url?: string; b64_json?: string }>;
-      url?: string;
-      image_url?: string;
-      imageUrl?: string;
+    pruneModelTestJobs();
+    const jobId = generateBusinessCode('job');
+    const runningJob: ModelTestJobRecord = {
+      ok: false,
+      state: 'running',
+      jobId,
+      modelId: String(testModel.id),
+      ownerId: req.authUser!.id,
+      message: 'Model test started',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     };
 
-    let imageBuffer: Uint8Array | null = null;
-    try {
-      imageBuffer = await resolveGeneratedImageBuffer(payload, String(testModel.api_endpoint), apiKey);
-    } catch (error) {
-      const errorMessage = isAbortError(error)
-        ? 'Generated image download timed out'
-        : 'Failed to download generated image';
-      const errorDetails = isAbortError(error)
-        ? `Generated image download timed out after ${imageDownloadTimeoutMs}ms`
-        : error instanceof Error
-        ? error.message
-        : String(error);
-      await markGenerationFailed(generationId, adminUserId, errorMessage, errorDetails);
-      res.json({
-        ok: false,
-        status: apiResponse.status,
-        message: errorMessage,
-        details: errorDetails,
-      });
+    modelTestJobs.set(jobId, runningJob);
+    setTimeout(() => {
+      void runModelTestJob(jobId, req.authUser!.id, testModel, apiKey);
+    }, 0);
+
+    res.status(202).json({
+      ok: runningJob.ok,
+      state: runningJob.state,
+      jobId: runningJob.jobId,
+      message: runningJob.message,
+    });
+  }));
+
+  app.get('/api/models/:id/test/:jobId', requireAdmin, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    if (!ensureServerRuntime(res)) return;
+
+    const job = modelTestJobs.get(String(req.params.jobId));
+    if (!job || job.modelId !== String(req.params.id) || job.ownerId !== req.authUser!.id) {
+      res.status(404).json({ error: 'Model test job not found' });
       return;
     }
-
-    if (!imageBuffer) {
-      const errorMessage = 'No image returned from provider';
-      const errorDetails = 'Provider response did not contain an image URL or base64 payload';
-      await markGenerationFailed(generationId, adminUserId, errorMessage, errorDetails);
-      res.json({
-        ok: false,
-        status: apiResponse.status,
-        message: errorMessage,
-        details: errorDetails,
-      });
-      return;
-    }
-
-    let uploadedImage: Awaited<ReturnType<typeof uploadGeneratedImage>>;
-    try {
-      uploadedImage = await uploadGeneratedImage(adminUserId, imageBuffer);
-    } catch (error) {
-      const errorMessage = 'Failed to upload image';
-      const errorDetails = error instanceof Error ? error.message : String(error);
-      await markGenerationFailed(generationId, adminUserId, errorMessage, errorDetails);
-      res.json({
-        ok: false,
-        status: apiResponse.status,
-        message: errorMessage,
-        details: errorDetails,
-      });
-      return;
-    }
-
-    await query!(
-      `update public.generations
-          set status = 'completed',
-              image_url = $3,
-              picture_id = $4,
-              picture_expires_at = $5,
-              picture_lifecycle = 'active'
-        where id = $1 and user_id = $2`,
-      [generationId, adminUserId, uploadedImage.publicUrl, uploadedImage.pictureId, uploadedImage.expiresAt.toISOString()]
-    );
 
     res.json({
-      ok: true,
-      status: apiResponse.status,
-      message: 'Model test succeeded',
-      imageUrl: uploadedImage.publicUrl,
+      ok: job.ok,
+      state: job.state,
+      jobId: job.jobId,
+      status: job.status,
+      message: job.message,
+      details: job.details,
+      imageUrl: job.imageUrl,
+      request: job.request,
+      response: job.response,
     });
   }));
 
@@ -1269,12 +1388,12 @@ export function createApp({
               model: upstreamModelId,
               prompt,
               n: 1,
-              size: resolveEditSize(aspectRatio),
+              size: resolveOpenAIImageSize(aspectRatio),
               images: [{ image_url: referenceImageUrl }],
             }
           : model.protocol === 'stability'
           ? (() => {
-              const [width, height] = resolveGenerationSize(aspectRatio).split('x').map(Number);
+              const [width, height] = resolveStabilityImageSize(aspectRatio).split('x').map(Number);
               return {
                 text_prompts: [{ text: prompt, weight: 1 }],
                 cfg_scale: 7,
@@ -1288,7 +1407,7 @@ export function createApp({
               model: upstreamModelId,
               prompt,
               n: 1,
-              size: resolveGenerationSize(aspectRatio),
+              size: resolveOpenAIImageSize(aspectRatio),
             };
 
       const apiKey = decryptSecret(String(model.api_key_ciphertext), configCryptKey);

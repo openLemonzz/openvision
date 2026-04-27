@@ -16,7 +16,7 @@ interface AdminModelsProps {
   onTestModel: (model: ModelConfig) => Promise<ModelTestResult>;
 }
 
-const SIZE_OPTIONS = ['1024x1024', '1024x576', '768x1024', '576x1024', '1792x1024', '1024x1792'];
+const SIZE_OPTIONS = ['1024x1024', '1536x1024', '1024x1536', 'auto'];
 
 const PROTOCOL_OPTIONS: { value: ApiProtocol; label: string }[] = [
   { value: 'openai', label: 'OpenAI 兼容' },
@@ -38,6 +38,18 @@ function readErrorMessage(error: unknown) {
   }
 
   return rawMessage;
+}
+
+function formatDiagnosticValue(value: unknown) {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 export default function AdminModels({ models, onUpdateModels, onDeleteModel, onTestModel }: AdminModelsProps) {
@@ -288,14 +300,14 @@ export default function AdminModels({ models, onUpdateModels, onDeleteModel, onT
             {testResults[model.draftKey] && (
               <div className={`px-5 py-2 border-b border-[#222] text-[10px] font-mono-data ${
                 testResults[model.draftKey].ok
-	                  ? 'text-emerald-300 bg-emerald-400/5'
-	                  : 'text-red-200 bg-red-400/5'
-	              }`}>
-	                <span className="text-[#777]">{model.id}</span>
-	                <span className="text-[#777] mx-2">/</span>
-	                <span>
-	                  {testResults[model.draftKey].ok ? '测试通过' : '测试失败'}
-	                </span>
+                  ? 'text-emerald-300 bg-emerald-400/5'
+                  : 'text-red-200 bg-red-400/5'
+              }`}>
+                <span className="text-[#777]">{model.id}</span>
+                <span className="text-[#777] mx-2">/</span>
+                <span>
+                  {testResults[model.draftKey].ok ? '测试通过' : '测试失败'}
+                </span>
                 <span className="text-[#777] mx-2">/</span>
                 <span>{testResults[model.draftKey].message}</span>
                 {typeof testResults[model.draftKey].status !== 'undefined' && (
@@ -303,20 +315,40 @@ export default function AdminModels({ models, onUpdateModels, onDeleteModel, onT
                 )}
                 {testResults[model.draftKey].details && (
                   <div className="text-[#888] mt-1 break-all">
-	                    {testResults[model.draftKey].details}
-	                  </div>
-	                )}
-	                {testResults[model.draftKey].imageUrl && (
-	                  <div className="mt-3 max-w-[220px] border border-[#222] bg-black">
-	                    <img
-	                      src={testResults[model.draftKey].imageUrl}
-	                      alt={`${model.id} test preview`}
-	                      className="block aspect-square w-full object-cover"
-	                    />
-	                  </div>
-	                )}
-	              </div>
-	            )}
+                    {testResults[model.draftKey].details}
+                  </div>
+                )}
+                {(testResults[model.draftKey].request || testResults[model.draftKey].response) && (
+                  <div className="mt-3 space-y-2 text-[#999]">
+                    {testResults[model.draftKey].request && (
+                      <div>
+                        <p className="mb-1 text-[#777]">请求参数</p>
+                        <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all border border-[#222] bg-black/50 p-2 text-[10px] leading-relaxed">
+                          {formatDiagnosticValue(testResults[model.draftKey].request)}
+                        </pre>
+                      </div>
+                    )}
+                    {testResults[model.draftKey].response && (
+                      <div>
+                        <p className="mb-1 text-[#777]">返回报错</p>
+                        <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all border border-[#222] bg-black/50 p-2 text-[10px] leading-relaxed">
+                          {formatDiagnosticValue(testResults[model.draftKey].response)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {testResults[model.draftKey].imageUrl && (
+                  <div className="mt-3 max-w-[220px] border border-[#222] bg-black">
+                    <img
+                      src={testResults[model.draftKey].imageUrl}
+                      alt={`${model.id} test preview`}
+                      className="block aspect-square w-full object-cover"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Card body */}
             <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-5">

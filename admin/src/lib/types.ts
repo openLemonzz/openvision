@@ -29,10 +29,20 @@ export interface ModelConfig {
 
 export interface ModelTestResult {
   ok: boolean;
+  state?: 'running' | 'completed' | 'failed';
+  jobId?: string;
   status?: number;
   message: string;
   details?: string | null;
   imageUrl?: string | null;
+  request?: {
+    endpoint: string;
+    body: unknown;
+  };
+  response?: {
+    status?: number;
+    body?: string | null;
+  };
 }
 
 export interface GenerationRecord {

@@ -11,6 +11,12 @@ import type {
 } from '@/lib/types';
 import { handleAdminAuthStateChange } from './admin-auth-state';
 
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 export function useAdminApp() {
   const [me, setMe] = useState<AdminMe | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -159,12 +165,35 @@ export function useAdminApp() {
     setModels((prev) => prev.filter((model) => model.id !== id));
   }, []);
 
-  const testModel = useCallback(async (model: ModelConfig) => (
-    apiFetch<ModelTestResult>(`/models/${encodeURIComponent(model.id)}/test`, {
+  const testModel = useCallback(async (model: ModelConfig) => {
+    const initialResult = await apiFetch<ModelTestResult>(`/models/${encodeURIComponent(model.id)}/test`, {
       method: 'POST',
       body: JSON.stringify(model),
-    })
-  ), []);
+    });
+
+    if (initialResult.state !== 'running' || !initialResult.jobId) {
+      return initialResult;
+    }
+
+    for (let attempt = 0; attempt < 650; attempt += 1) {
+      await sleep(2000);
+      const nextResult = await apiFetch<ModelTestResult>(
+        `/models/${encodeURIComponent(model.id)}/test/${encodeURIComponent(initialResult.jobId)}`
+      );
+
+      if (nextResult.state !== 'running') {
+        return nextResult;
+      }
+    }
+
+    return {
+      ...initialResult,
+      ok: false,
+      state: 'failed' as const,
+      message: 'Model test polling timed out',
+      details: 'Admin client stopped polling before the model test finished.',
+    };
+  }, []);
 
   const updateSettings = useCallback(async (nextSettings: AppSettings) => {
     const savedSettings = await apiFetch<AppSettings>('/settings', {

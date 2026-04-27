@@ -33,6 +33,35 @@ async function withTestServer(
   }
 }
 
+async function sleep(ms: number) {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitForModelTestResult(baseUrl: string, modelId: string, jobId: string) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const response = await fetch(
+      `${baseUrl}/api/models/${encodeURIComponent(modelId)}/test/${encodeURIComponent(jobId)}`,
+      {
+        headers: {
+          Authorization: 'Bearer admin-token',
+        },
+      }
+    );
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { state?: string };
+    if (payload.state !== 'running') {
+      return payload;
+    }
+
+    await sleep(5);
+  }
+
+  throw new Error(`Timed out waiting for model test job ${jobId}`);
+}
+
 test('default upstream generation request timeout is 20 minutes', () => {
   assert.equal(
     (serverApp as { DEFAULT_GENERATION_REQUEST_TIMEOUT_MS?: number }).DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
@@ -383,7 +412,7 @@ test('POST /api/models/:id/test generates an admin-owned preview image', async (
         assert.deepEqual(params?.slice(0, 5), [
           'admin-1',
           'openai-fast availability test image',
-          '3:4',
+          '1:1',
           75,
           'openai-fast',
         ]);
@@ -455,7 +484,7 @@ test('POST /api/models/:id/test generates an admin-owned preview image', async (
 
   const originalDateNow = Date.now;
   const originalRandom = Math.random;
-  const randomValues = [0.1, 0.2];
+  const randomValues = [0.1, 0.2, 0.2];
   let randomCallCount = 0;
 
   Date.now = () => 1713873600000;
@@ -472,9 +501,21 @@ test('POST /api/models/:id/test generates an admin-owned preview image', async (
         body: JSON.stringify({}),
       });
 
-      assert.equal(response.status, 200);
-      assert.deepEqual(await response.json(), {
+      assert.equal(response.status, 202);
+      const started = await response.json() as { jobId?: unknown };
+      assert.match(String(started.jobId), /^job_\d{13}_[a-z0-9]{6}$/);
+      assert.deepEqual(started, {
+        ok: false,
+        state: 'running',
+        jobId: started.jobId,
+        message: 'Model test started',
+      });
+
+      const result = await waitForModelTestResult(baseUrl, 'openai-fast', String(started.jobId));
+      assert.deepEqual(result, {
         ok: true,
+        state: 'completed',
+        jobId: started.jobId,
         status: 200,
         message: 'Model test succeeded',
         imageUrl: 'https://cdn.example.com/admin-1/img_1713873600000_777777.png',
@@ -489,7 +530,7 @@ test('POST /api/models/:id/test generates an admin-owned preview image', async (
     model: 'gpt-image-2',
     prompt: 'openai-fast availability test image',
     n: 1,
-    size: '768x1024',
+    size: '1024x1024',
   });
 });
 
@@ -571,12 +612,155 @@ test('POST /api/models/:id/test returns upstream diagnostics without saving imag
       body: JSON.stringify({}),
     });
 
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
+    assert.equal(response.status, 202);
+    const started = await response.json() as { jobId?: unknown };
+    assert.match(String(started.jobId), /^job_\d{13}_[a-z0-9]{6}$/);
+    assert.deepEqual(started, {
       ok: false,
+      state: 'running',
+      jobId: started.jobId,
+      message: 'Model test started',
+    });
+
+    const result = await waitForModelTestResult(baseUrl, 'openai-fast', String(started.jobId));
+    assert.deepEqual(result, {
+      ok: false,
+      state: 'failed',
+      jobId: started.jobId,
       status: 401,
       message: 'Upstream failed: 401',
       details: '{"error":"invalid api key"}',
+      request: {
+        endpoint: 'https://provider.example.com/v1/images/generations',
+        body: {
+          model: 'gpt-image-2',
+          prompt: 'openai-fast availability test image',
+          n: 1,
+          size: '1024x1024',
+        },
+      },
+      response: {
+        status: 401,
+        body: '{"error":"invalid api key"}',
+      },
+    });
+  });
+});
+
+test('POST /api/models/:id/test includes provider payload when no preview image is returned', async () => {
+  const configCryptKey = 'abcdefabcdefabcdefabcdefabcdefab';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+
+  const dependencies: ServerDependencies = {
+    configCryptKey,
+    resolveAuthUser: async () => ({ id: 'admin-1', email: 'admin@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select 1 from public.admin_roles')) {
+        assert.deepEqual(params, ['admin-1']);
+        return { rows: [{ '?column?': 1 }], rowCount: 1 };
+      }
+
+      if (sql.includes('from public.model_configs') && sql.includes('where id = $1')) {
+        assert.deepEqual(params, ['gpt-image-2-2']);
+        return {
+          rows: [{
+            id: 'gpt-image-2-2',
+            request_model_id: 'gpt-image-2',
+            enabled: true,
+            protocol: 'openai',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+            default_size: '1024x1024',
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('insert into public.generations')) {
+        assert.deepEqual(params?.slice(0, 5), [
+          'admin-1',
+          'gpt-image-2-2 availability test image',
+          '1:1',
+          75,
+          'gpt-image-2-2',
+        ]);
+        return {
+          rows: [{ id: 'admin-test-no-image-1', generation_code: params?.[5] }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('set status = \'generating\'')) {
+        assert.deepEqual(params, ['admin-test-no-image-1', 'admin-1']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'failed\'')) {
+        assert.deepEqual(params, [
+          'admin-test-no-image-1',
+          'admin-1',
+          'No image returned from provider',
+          'Provider response did not contain an image URL or base64 payload: {"error":{"message":"Prompt rejected: gpt-image-2-2 availability test image","type":"invalid_request_error"}}',
+        ]);
+        return { rows: [], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async () => new Response(JSON.stringify({
+      error: {
+        message: 'Prompt rejected: gpt-image-2-2 availability test image',
+        type: 'invalid_request_error',
+      },
+    }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }),
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/models/gpt-image-2-2/test`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer admin-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(response.status, 202);
+    const started = await response.json() as { jobId?: unknown };
+    assert.match(String(started.jobId), /^job_\d{13}_[a-z0-9]{6}$/);
+    assert.deepEqual(started, {
+      ok: false,
+      state: 'running',
+      jobId: started.jobId,
+      message: 'Model test started',
+    });
+
+    const result = await waitForModelTestResult(baseUrl, 'gpt-image-2-2', String(started.jobId));
+    assert.deepEqual(result, {
+      ok: false,
+      state: 'failed',
+      jobId: started.jobId,
+      status: 200,
+      message: 'No image returned from provider',
+      details: 'Provider response did not contain an image URL or base64 payload: {"error":{"message":"Prompt rejected: gpt-image-2-2 availability test image","type":"invalid_request_error"}}',
+      request: {
+        endpoint: 'https://provider.example.com/v1/images/generations',
+        body: {
+          model: 'gpt-image-2',
+          prompt: 'gpt-image-2-2 availability test image',
+          n: 1,
+          size: '1024x1024',
+        },
+      },
+      response: {
+        status: 200,
+        body: '{"error":{"message":"Prompt rejected: gpt-image-2-2 availability test image","type":"invalid_request_error"}}',
+      },
     });
   });
 });
@@ -1162,7 +1346,7 @@ test('POST /api/generate sends the configured request model id upstream while st
       }
 
       if (sql.includes('insert into public.generations')) {
-        assert.deepEqual(params?.slice(0, 5), ['shared-user', 'draw a comet', '1:1', 75, 'openai-fast']);
+        assert.deepEqual(params?.slice(0, 5), ['shared-user', 'draw a comet', '16:9', 75, 'openai-fast']);
         return {
           rows: [{ id: 'gen-shared-1' }],
           rowCount: 1,
@@ -1220,7 +1404,7 @@ test('POST /api/generate sends the configured request model id upstream while st
       body: JSON.stringify({
         prompt: 'draw a comet',
         modelId: 'openai-fast',
-        aspectRatio: '1:1',
+        aspectRatio: '16:9',
         styleStrength: 75,
       }),
     });
@@ -1232,7 +1416,7 @@ test('POST /api/generate sends the configured request model id upstream while st
     model: 'gpt-image-2',
     prompt: 'draw a comet',
     n: 1,
-    size: '1024x1024',
+    size: '1536x1024',
   });
 });
 
