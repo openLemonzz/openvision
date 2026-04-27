@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { adminFetch } from '@/lib/admin-api';
@@ -151,10 +151,26 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
 
     try {
       const records = await adminFetch<GenerationRecord[]>('/my/generations', {}, accessToken);
-      // 按创建时间降序排列，确保最新的记录在最前面
-      records.sort((a, b) => b.createdAt - a.createdAt);
       console.log(`[FE] loadHistory() loaded ${records.length} records`);
-      setHistory(records);
+      
+      setHistory(prev => {
+        const recordMap = new Map(records.map(r => [r.id, r]));
+        const now = Date.now();
+        
+        // 保留本地状态中由于数据库同步延迟可能未返回的新建记录（30秒内）
+        prev.forEach(p => {
+          if ((p.status === 'pending' || p.status === 'generating') && now - p.createdAt < 30000) {
+            if (!recordMap.has(p.id)) {
+              recordMap.set(p.id, p);
+            }
+          }
+        });
+        
+        const merged = Array.from(recordMap.values());
+        // 按创建时间降序排列，确保最新的记录在最前面
+        merged.sort((a, b) => b.createdAt - a.createdAt);
+        return merged;
+      });
     } catch (error) {
       console.error('[FE] Failed to load history:', getErrorMessage(error));
       setHistory([]);
@@ -193,6 +209,11 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     }
   }, [getAccessToken, userId]);
 
+  const isGeneratingRef = useRef(false);
+  useEffect(() => {
+    isGeneratingRef.current = countActiveGenerations(history) > 0;
+  }, [history]);
+
   useEffect(() => {
     if (!userId) {
       setCapacity(null);
@@ -204,10 +225,13 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     void loadGenerationCapacity();
     const interval = window.setInterval(() => {
       void loadGenerationCapacity();
+      if (isGeneratingRef.current) {
+        void loadHistory();
+      }
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [loadGenerationCapacity, userId]);
+  }, [loadGenerationCapacity, loadHistory, userId]);
 
   const activeGenerationCount = countActiveGenerations(history);
   const isGenerating = activeGenerationCount > 0;
