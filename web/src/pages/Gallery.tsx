@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Grid3X3, List } from 'lucide-react';
 import CopyableMonoValue from '../components/CopyableMonoValue';
+import CopyPromptButton from '../components/CopyPromptButton';
 import GenerationImageActions from '../components/GenerationImageActions';
 import Lightbox from '../components/ui/Lightbox';
 import type { GenerationRecord } from '../hooks/useGeneration';
@@ -117,7 +118,10 @@ export default function Gallery({ history, onDelete, onToggleFavorite, onEditIma
                     <CopyableMonoValue prefix="gen" value={record.generationCode} />
                     <CopyableMonoValue prefix="pic" value={record.pictureId} />
                   </div>
-                  <p className="text-[11px] text-white leading-snug line-clamp-3">{record.prompt}</p>
+                  <div className="flex items-start gap-2">
+                    <p className="min-w-0 flex-1 text-[11px] text-white leading-snug line-clamp-3">{record.prompt}</p>
+                    <CopyPromptButton value={record.prompt} className="text-white/60 hover:text-white" />
+                  </div>
                 </div>
               </div>
             </div>
@@ -147,7 +151,10 @@ export default function Gallery({ history, onDelete, onToggleFavorite, onEditIma
                 />
               </div>
               <div>
-                <p className="text-[12px] text-white leading-relaxed">{record.prompt}</p>
+                <div className="flex items-start gap-2">
+                  <p className="min-w-0 flex-1 text-[12px] text-white leading-relaxed">{record.prompt}</p>
+                  <CopyPromptButton value={record.prompt} className="text-white/60 hover:text-white" />
+                </div>
                 <div className="flex gap-4 mt-2">
                   <span className="text-[10px] text-[#4D4D4D] font-mono-data">{record.aspectRatio}</span>
                   <span className="text-[10px] text-[#4D4D4D] font-mono-data">{record.engine}</span>

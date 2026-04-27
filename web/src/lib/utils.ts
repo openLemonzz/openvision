@@ -5,6 +5,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function isImageDataUrl(value: string) {
+  return /^data:image\/[a-z0-9.+-]+;base64,/i.test(value.trim());
+}
+
 type ActiveGenerationRecord = {
   status: string;
 };
@@ -48,6 +52,7 @@ export function buildGenerateRequestPayload(args: {
   aspectRatio: string;
   styleStrength: number;
   referenceImageUrl?: string | null;
+  referenceImageDataUrl?: string | null;
 }) {
   const payload = {
     prompt: args.prompt,
@@ -56,6 +61,15 @@ export function buildGenerateRequestPayload(args: {
     styleStrength: args.styleStrength,
   };
   const referenceImageUrl = args.referenceImageUrl?.trim();
+  const referenceImageDataUrl = args.referenceImageDataUrl?.trim() ||
+    (referenceImageUrl && isImageDataUrl(referenceImageUrl) ? referenceImageUrl : '');
+
+  if (referenceImageDataUrl) {
+    return {
+      ...payload,
+      referenceImageDataUrl,
+    };
+  }
 
   if (!referenceImageUrl) {
     return payload;

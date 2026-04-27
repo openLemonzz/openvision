@@ -303,6 +303,7 @@ test('buildGenerateRequestPayload includes the reference image only when edit mo
       aspectRatio: string;
       styleStrength: number;
       referenceImageUrl?: string | null;
+      referenceImageDataUrl?: string | null;
     }) => Record<string, unknown>;
   };
 
@@ -336,6 +337,38 @@ test('buildGenerateRequestPayload includes the reference image only when edit mo
       modelId: 'gpt-image-2',
       aspectRatio: '16:9',
       styleStrength: 75,
+    }
+  );
+  assert.deepEqual(
+    buildGenerateRequestPayload?.({
+      prompt: 'edit pasted image',
+      modelId: 'gpt-image-2',
+      aspectRatio: '1:1',
+      styleStrength: 80,
+      referenceImageUrl: 'data:image/png;base64,cGFzdGVkLWltYWdl',
+    }),
+    {
+      prompt: 'edit pasted image',
+      modelId: 'gpt-image-2',
+      aspectRatio: '1:1',
+      styleStrength: 80,
+      referenceImageDataUrl: 'data:image/png;base64,cGFzdGVkLWltYWdl',
+    }
+  );
+  assert.deepEqual(
+    buildGenerateRequestPayload?.({
+      prompt: 'edit pasted image',
+      modelId: 'gpt-image-2',
+      aspectRatio: '1:1',
+      styleStrength: 80,
+      referenceImageDataUrl: 'data:image/jpeg;base64,anBlZw==',
+    }),
+    {
+      prompt: 'edit pasted image',
+      modelId: 'gpt-image-2',
+      aspectRatio: '1:1',
+      styleStrength: 80,
+      referenceImageDataUrl: 'data:image/jpeg;base64,anBlZw==',
     }
   );
 });

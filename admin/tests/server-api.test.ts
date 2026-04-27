@@ -1546,6 +1546,134 @@ test('POST /api/generate switches to image-edit mode when a reference image is p
   });
 });
 
+test('POST /api/generate uploads pasted reference image data before image-edit upstream call', async () => {
+  const configCryptKey = '2234567890abcdef1234567890abcdef';
+  const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);
+  const pastedReference = Buffer.from('pasted-reference-png');
+  const uploadCalls: Array<{ filePath: string; body: Uint8Array; contentType: string }> = [];
+  let upstreamRequestBody: Record<string, unknown> | null = null;
+
+  const dependencies: ServerDependencies = {
+    configCryptKey,
+    resolveAuthUser: async () => ({ id: 'paste-user', email: 'paste@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('select is_disabled') && sql.includes('concurrency_limit')) {
+        assert.deepEqual(params, ['paste-user']);
+        return {
+          rows: [{ is_disabled: false, concurrency_limit: 1 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('count(*)::int as active_generation_count')) {
+        assert.deepEqual(params, ['paste-user']);
+        return {
+          rows: [{ active_generation_count: 0 }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('from public.model_configs')) {
+        assert.deepEqual(params, ['gpt-image-2']);
+        return {
+          rows: [{
+            id: 'gpt-image-2',
+            enabled: true,
+            protocol: 'openai',
+            api_endpoint: 'https://provider.example.com/v1/images/generations',
+            api_key_ciphertext: apiKeyCiphertext,
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('insert into public.generations')) {
+        return {
+          rows: [{ id: 'gen-paste-1', generation_code: 'gen_paste_1' }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('set status = \'generating\'')) {
+        assert.deepEqual(params, ['gen-paste-1', 'paste-user']);
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (sql.includes('set status = \'completed\'')) {
+        assert.deepEqual(params?.slice(0, 2), ['gen-paste-1', 'paste-user']);
+        assert.match(String(params?.[2]), /^https:\/\/cdn\.example\.com\/paste-user\/img_\d{13}_[a-z0-9]{6}\.png$/);
+        return { rows: [], rowCount: 1 };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    fetch: async (input, init) => {
+      assert.equal(input, 'https://provider.example.com/v1/images/edits');
+      upstreamRequestBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        data: [{ b64_json: Buffer.from('edited-png').toString('base64') }],
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    },
+    getStorageClient: async () => ({
+      storage: {
+        from: (bucket: string) => {
+          assert.equal(bucket, 'images');
+          return {
+            upload: async (filePath: string, body: Uint8Array, options: { contentType: string; upsert: boolean }) => {
+              uploadCalls.push({ filePath, body, contentType: options.contentType });
+              assert.equal(body instanceof Uint8Array, true);
+              assert.equal(options.upsert, true);
+              return { error: null };
+            },
+            getPublicUrl: (filePath: string) => ({
+              data: {
+                publicUrl: `https://cdn.example.com/${filePath}`,
+              },
+            }),
+          };
+        },
+      },
+    }) as Awaited<ReturnType<NonNullable<ServerDependencies['getStorageClient']>>>,
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer user-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'edit pasted image',
+        modelId: 'gpt-image-2',
+        aspectRatio: '1:1',
+        styleStrength: 75,
+        referenceImageDataUrl: `data:image/png;base64,${pastedReference.toString('base64')}`,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+  });
+
+  assert.equal(uploadCalls.length, 2);
+  assert.match(uploadCalls[0].filePath, /^paste-user\/references\/img_\d{13}_[a-z0-9]{6}\.png$/);
+  assert.deepEqual(Buffer.from(uploadCalls[0].body), pastedReference);
+  assert.equal(uploadCalls[0].contentType, 'image/png');
+  assert.match(uploadCalls[1].filePath, /^paste-user\/img_\d{13}_[a-z0-9]{6}\.png$/);
+  assert.deepEqual(upstreamRequestBody, {
+    model: 'gpt-image-2',
+    prompt: 'edit pasted image',
+    n: 1,
+    size: '1024x1024',
+    images: [{ image_url: `https://cdn.example.com/${uploadCalls[0].filePath}` }],
+  });
+});
+
 test('POST /api/generate rejects edit mode for protocols without implemented reference-image support', async () => {
   const configCryptKey = 'abcdefabcdefabcdefabcdefabcdefab';
   const apiKeyCiphertext = encryptSecret('provider-key', configCryptKey);

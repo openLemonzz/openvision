@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Clock, Ratio } from 'lucide-react';
 import CopyableMonoValue from '../../components/CopyableMonoValue';
+import CopyPromptButton from '../../components/CopyPromptButton';
 import GenerationImageActions from '../../components/GenerationImageActions';
 import Lightbox from '../../components/ui/Lightbox';
 import type { GenerationRecord } from '../../hooks/useGeneration';
@@ -106,9 +107,12 @@ export default function ConsoleGenerations({ history, onDelete, onToggleFavorite
                 <ProgressTrack record={record} />
               </div>
 
-              <p className="text-[12px] text-[#A8A8A8] leading-relaxed mt-4 line-clamp-2">
-                {record.prompt}
-              </p>
+              <div className="mt-4 flex items-start gap-2">
+                <p className="min-w-0 flex-1 text-[12px] text-[#A8A8A8] leading-relaxed line-clamp-2">
+                  {record.prompt}
+                </p>
+                <CopyPromptButton value={record.prompt} />
+              </div>
             </div>
 
             {/* Image panel */}

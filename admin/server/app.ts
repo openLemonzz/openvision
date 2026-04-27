@@ -106,6 +106,34 @@ function generateBusinessCode(prefix: 'gen' | 'img' | 'job') {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+type ParsedImageDataUrl = {
+  contentType: string;
+  extension: 'png' | 'jpg' | 'webp';
+  buffer: Uint8Array;
+};
+
+function parseImageDataUrl(value: string): ParsedImageDataUrl | null {
+  const match = /^data:(image\/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/]+={0,2})$/i.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+
+  const rawContentType = match[1].toLowerCase();
+  const contentType = rawContentType === 'image/jpg' ? 'image/jpeg' : rawContentType;
+  const extension = contentType === 'image/jpeg' ? 'jpg' : contentType === 'image/webp' ? 'webp' : 'png';
+  const buffer = Buffer.from(match[2], 'base64');
+
+  if (buffer.length === 0) {
+    return null;
+  }
+
+  return {
+    contentType,
+    extension,
+    buffer: new Uint8Array(buffer),
+  };
+}
+
 function mapAdminGenerationRow(row: Record<string, unknown>) {
   return {
     ...mapGenerationRow(row),
@@ -353,7 +381,7 @@ export function createApp({
   app.use(cors({
     origin: allowedOrigins,
   }));
-  app.use(express.json({ limit: '4mb' }));
+  app.use(express.json({ limit: '18mb' }));
 
   function ensureServerRuntime(res: Response) {
     if (query && missingConfig.length === 0) {
@@ -559,6 +587,34 @@ export function createApp({
       publicUrl: urlData.publicUrl,
       expiresAt,
     };
+  }
+
+  async function uploadReferenceImage(userId: string, dataUrl: string) {
+    const parsed = parseImageDataUrl(dataUrl);
+    if (!parsed) {
+      throw new Error('Invalid reference image data');
+    }
+
+    const storageClient = await getStorageClient();
+    if (!storageClient) {
+      throw new Error(`Missing server config: ${missingConfig.join(', ')}`);
+    }
+
+    const referenceId = generateBusinessCode('img');
+    const filePath = `${userId}/references/${referenceId}.${parsed.extension}`;
+    const { error: uploadError } = await storageClient.storage
+      .from('images')
+      .upload(filePath, parsed.buffer, {
+        contentType: parsed.contentType,
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(`Storage upload failed: ${truncateDiagnosticText(uploadError) ?? 'unknown error'}`);
+    }
+
+    const { data: urlData } = storageClient.storage.from('images').getPublicUrl(filePath);
+    return urlData.publicUrl;
   }
 
   const modelTestJobs = new Map<string, ModelTestJobRecord>();
@@ -1319,14 +1375,30 @@ export function createApp({
     const modelId = String(req.body.modelId || req.body.engine || '');
     const aspectRatio = String(req.body.aspectRatio || '1:1');
     const styleStrength = Number(req.body.styleStrength || 75);
-    const referenceImageUrl =
+    const rawReferenceImageUrl =
       typeof req.body.referenceImageUrl === 'string' && req.body.referenceImageUrl.trim()
         ? req.body.referenceImageUrl.trim()
         : null;
+    const rawReferenceImageDataUrl =
+      typeof req.body.referenceImageDataUrl === 'string' && req.body.referenceImageDataUrl.trim()
+        ? req.body.referenceImageDataUrl.trim()
+        : null;
+    const referenceImageDataUrl = rawReferenceImageDataUrl ||
+      (rawReferenceImageUrl?.startsWith('data:') ? rawReferenceImageUrl : null);
+    const referenceImageUrl =
+      rawReferenceImageUrl && !rawReferenceImageUrl.startsWith('data:')
+        ? rawReferenceImageUrl
+        : null;
+    const hasReferenceImage = Boolean(referenceImageUrl || referenceImageDataUrl);
     const userId = req.authUser!.id;
 
     if (!prompt) {
       res.status(400).json({ error: 'Prompt is required' });
+      return;
+    }
+
+    if (referenceImageDataUrl && !parseImageDataUrl(referenceImageDataUrl)) {
+      res.status(400).json({ error: 'Invalid reference image data' });
       return;
     }
 
@@ -1354,7 +1426,7 @@ export function createApp({
       return;
     }
 
-    if (referenceImageUrl && model.protocol === 'stability') {
+    if (hasReferenceImage && model.protocol === 'stability') {
       res.status(400).json({ error: 'Selected model does not support reference image edits' });
       return;
     }
@@ -1382,14 +1454,27 @@ export function createApp({
       );
 
       const upstreamModelId = String(model.request_model_id || model.id);
+      let resolvedReferenceImageUrl = referenceImageUrl;
+
+      if (referenceImageDataUrl) {
+        try {
+          resolvedReferenceImageUrl = await uploadReferenceImage(userId, referenceImageDataUrl);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await markGenerationFailed(generationId, userId, 'Failed to upload reference image', message);
+          res.status(message === 'Invalid reference image data' ? 400 : 500).json({ error: message });
+          return;
+        }
+      }
+
       const requestBody =
-        referenceImageUrl
+        resolvedReferenceImageUrl
           ? {
               model: upstreamModelId,
               prompt,
               n: 1,
               size: resolveOpenAIImageSize(aspectRatio),
-              images: [{ image_url: referenceImageUrl }],
+              images: [{ image_url: resolvedReferenceImageUrl }],
             }
           : model.protocol === 'stability'
           ? (() => {
@@ -1416,7 +1501,7 @@ export function createApp({
       try {
         apiResponse = await fetchWithTimeout(
           fetchImpl,
-          referenceImageUrl
+          resolvedReferenceImageUrl
             ? resolveImageEditApiEndpoint(String(model.api_endpoint))
             : String(model.api_endpoint),
           {

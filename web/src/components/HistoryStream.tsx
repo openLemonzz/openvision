@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import { Clock, Ratio, ChevronDown, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import CopyableMonoValue from './CopyableMonoValue';
+import CopyPromptButton from './CopyPromptButton';
 import GenerationImageActions from './GenerationImageActions';
 import Lightbox from './ui/Lightbox';
 import type { GenerationRecord } from '../hooks/useGeneration';
@@ -163,9 +164,12 @@ function RecordCard({
           </div>
           <ProgressTrack record={record} />
         </div>
-        <p className="text-[12px] text-[#A8A8A8] leading-relaxed mt-4 line-clamp-2">
-          {record.prompt}
-        </p>
+        <div className="mt-4 flex items-start gap-2">
+          <p className="min-w-0 flex-1 text-[12px] text-[#A8A8A8] leading-relaxed line-clamp-2">
+            {record.prompt}
+          </p>
+          <CopyPromptButton value={record.prompt} />
+        </div>
       </div>
 
       {/* Image panel */}

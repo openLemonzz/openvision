@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Heart, Maximize2, MoreHorizontal, RefreshCcw, Trash2, Wand2, Download, Share2, Check } from 'lucide-react';
 
 import { toast } from 'sonner';
+import { downloadImageFromUrl } from '../lib/image-actions';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,15 +20,6 @@ interface GenerationImageActionsProps {
   onEditImage?: () => void;
   onRetryGenerate?: () => void;
   onZoom?: () => void;
-}
-
-function downloadImage(url: string, downloadName: string) {
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = downloadName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
 }
 
 export default function GenerationImageActions({
@@ -130,6 +122,29 @@ export default function GenerationImageActions({
   ].filter(Boolean);
 
   const [shareState, setShareState] = useState<'idle' | 'copied'>('idle');
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    if (!imageUrl || isDownloading) {
+      return;
+    }
+
+    setIsDownloading(true);
+    const outcome = await downloadImageFromUrl(imageUrl, downloadName || 'vision-image.png');
+    setIsDownloading(false);
+
+    if (outcome === 'downloaded') {
+      toast.success('已开始下载');
+      return;
+    }
+
+    if (outcome === 'opened') {
+      toast.info('已打开原图');
+      return;
+    }
+
+    toast.error('下载失败');
+  };
 
   const handleShare = async () => {
     // 优先使用系统分享
@@ -167,12 +182,11 @@ export default function GenerationImageActions({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
             <DropdownMenuItem
-              onClick={() => {
-                downloadImage(imageUrl, downloadName || 'vision-image.png');
-              }}
+              disabled={isDownloading}
+              onClick={() => void handleDownload()}
             >
               <Download size={13} />
-              下载
+              {isDownloading ? '下载中' : '下载'}
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => void handleShare()}

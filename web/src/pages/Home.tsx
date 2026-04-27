@@ -189,6 +189,7 @@ export default function Home({
             draftEngine={draftEngine}
             onGenerate={handleGenerate}
             onRequireAuth={onRequireAuth}
+            onSetReferenceImage={setReferenceImageUrl}
             onClearReferenceImage={() => {
               setReferenceImageUrl(null);
               setDraftAspectRatio(null);

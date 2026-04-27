@@ -1,5 +1,6 @@
-import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect, type ClipboardEvent } from 'react';
 import { Zap, AlertCircle, ChevronDown, Check } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +42,7 @@ interface GenerateConsoleProps {
     referenceImageUrl?: string | null,
   ) => Promise<string>;
   onRequireAuth: () => void;
+  onSetReferenceImage: (imageUrl: string) => void;
   onClearReferenceImage: () => void;
 }
 
@@ -59,6 +61,7 @@ export default function GenerateConsole({
   draftEngine,
   onGenerate,
   onRequireAuth,
+  onSetReferenceImage,
   onClearReferenceImage,
 }: GenerateConsoleProps) {
   const [prompt, setPrompt] = useState('');
@@ -140,6 +143,41 @@ export default function GenerateConsole({
     }
   }, [prompt, aspectRatio, styleStrength, engine, isLoggedIn, onGenerate, onRequireAuth, referenceImageUrl]);
 
+  const handlePaste = useCallback((event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageItem = Array.from(event.clipboardData.items).find((item) =>
+      item.kind === 'file' && item.type.startsWith('image/')
+    );
+
+    if (!imageItem) {
+      return;
+    }
+
+    const imageFile = imageItem.getAsFile();
+    if (!imageFile) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (imageFile.size > 12 * 1024 * 1024) {
+      toast.error('参考图不能超过 12MB');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        toast.error('读取粘贴图片失败');
+        return;
+      }
+
+      onSetReferenceImage(reader.result);
+      toast.success('已载入参考图');
+    };
+    reader.onerror = () => toast.error('读取粘贴图片失败');
+    reader.readAsDataURL(imageFile);
+  }, [onSetReferenceImage]);
+
   const buttonLabel = useMemo(() => {
     if (modelsLoading) return '加载模型...';
     if (modelsError) return '模型服务异常';
@@ -190,6 +228,7 @@ export default function GenerateConsole({
           ref={textareaRef}
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
+          onPaste={handlePaste}
           onKeyDown={e => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
               e.preventDefault();
