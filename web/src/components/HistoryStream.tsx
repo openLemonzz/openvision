@@ -16,6 +16,7 @@ interface HistoryStreamProps {
   records: GenerationRecord[];
   onDelete?: (id: string) => void;
   onToggleFavorite?: (id: string) => void;
+  onToggleShare?: (id: string) => void;
   onEditImage?: (imageUrl: string, prompt?: string) => void;
   onRetryGenerate?: (
     prompt: string,
@@ -123,6 +124,7 @@ function RecordCard({
   animatedRecordIds,
   onDelete,
   onToggleFavorite,
+  onToggleShare,
   onEditImage,
   onRetryGenerate,
   onZoom,
@@ -132,6 +134,7 @@ function RecordCard({
   animatedRecordIds: Record<string, true>;
   onDelete?: (id: string) => void;
   onToggleFavorite?: (id: string) => void;
+  onToggleShare?: (id: string) => void;
   onEditImage?: (imageUrl: string, prompt?: string) => void;
   onRetryGenerate?: (prompt: string, aspectRatio: '1:1' | '16:9' | '3:4' | '9:16', styleStrength: number, engine: string) => void;
   onZoom?: (url: string) => void;
@@ -207,7 +210,9 @@ function RecordCard({
                 imageUrl={record.imageUrl}
                 downloadName={`${record.generationCode || record.pictureId || 'vision-image'}.png`}
                 isFavorite={record.isFavorite}
+                isShared={record.isShared}
                 onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(record.id) : undefined}
+                onToggleShare={onToggleShare ? () => onToggleShare(record.id) : undefined}
                 onDelete={onDelete ? () => onDelete(record.id) : undefined}
                 onEditImage={onEditImage ? () => onEditImage(record.imageUrl!, record.prompt) : undefined}
                 onZoom={onZoom ? () => onZoom(record.imageUrl!) : undefined}
@@ -242,6 +247,7 @@ export default function HistoryStream({
   records,
   onDelete,
   onToggleFavorite,
+  onToggleShare,
   onEditImage,
   onRetryGenerate,
   lifecycleTick,
@@ -291,7 +297,7 @@ export default function HistoryStream({
   const restRecords = records.slice(1);
   const hasMore = foldable && restRecords.length > 0;
 
-  const commonProps = { animatedRecordIds, onDelete, onToggleFavorite, onEditImage, onRetryGenerate, onZoom: openLightbox, formatTime };
+  const commonProps = { animatedRecordIds, onDelete, onToggleFavorite, onToggleShare, onEditImage, onRetryGenerate, onZoom: openLightbox, formatTime };
 
   return (
     <div className="w-full max-w-[1100px] mx-auto mt-16 mb-20 px-6">

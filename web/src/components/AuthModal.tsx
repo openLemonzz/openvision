@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Eye, EyeOff } from 'lucide-react';
 import { shouldCloseAuthModalFromClick } from './auth-modal-backdrop';
+import { resolveInviteCodeFromLocation } from '@/lib/share-links';
 
 interface AuthModalProps {
   visible: boolean;
@@ -28,7 +29,14 @@ export default function AuthModal({ visible, mode, error, confirmation, onClose,
   useEffect(() => {
     setPassword('');
     setUsername('');
-    setInviteCode('');
+
+    // Attempt to read invite code from URL if in register mode
+    let initialInviteCode = '';
+    if (mode === 'register' && typeof window !== 'undefined') {
+      initialInviteCode = resolveInviteCodeFromLocation(window.location);
+    }
+    setInviteCode(initialInviteCode);
+
     setSubmitting(false);
     setShowPassword(false);
     setLocalError('');

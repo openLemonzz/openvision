@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Heart, Maximize2, MoreHorizontal, RefreshCcw, Trash2, Wand2, Download, Share2, Check } from 'lucide-react';
+import { Heart, Maximize2, MoreHorizontal, RefreshCcw, Trash2, Wand2, Download, Share2, Share, Check } from 'lucide-react';
 
 import { toast } from 'sonner';
 import { downloadImageFromUrl } from '../lib/image-actions';
@@ -15,7 +15,9 @@ interface GenerationImageActionsProps {
   imageUrl?: string | null;
   downloadName?: string | null;
   isFavorite?: boolean;
+  isShared?: boolean;
   onToggleFavorite?: () => void;
+  onToggleShare?: () => void;
   onDelete?: () => void;
   onEditImage?: () => void;
   onRetryGenerate?: () => void;
@@ -26,7 +28,9 @@ export default function GenerationImageActions({
   imageUrl,
   downloadName,
   isFavorite = false,
+  isShared = false,
   onToggleFavorite,
+  onToggleShare,
   onDelete,
   onEditImage,
   onRetryGenerate,
@@ -192,8 +196,14 @@ export default function GenerationImageActions({
               onClick={() => void handleShare()}
             >
               {shareState === 'copied' ? <Check size={13} className="text-emerald-400" /> : <Share2 size={13} />}
-              {shareState === 'copied' ? '已复制链接' : '分享'}
+              {shareState === 'copied' ? '已复制链接' : '复制图片链接'}
             </DropdownMenuItem>
+            {onToggleShare ? (
+              <DropdownMenuItem onClick={onToggleShare}>
+                <Share size={13} />
+                {isShared ? '取消公开分享' : '公开分享(网页)'}
+              </DropdownMenuItem>
+            ) : null}
             {onEditImage ? (
               <DropdownMenuItem onClick={onEditImage}>
                 <Wand2 size={13} />

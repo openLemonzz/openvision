@@ -891,6 +891,8 @@ test('user generation APIs are scoped to the authenticated user', async () => {
             error_message: 'Upstream failed: 502',
             error_details: 'provider returned 502',
             is_favorite: false,
+            is_shared: false,
+            share_code: null,
             user_id: 'user-1',
           }],
           rowCount: 1,
@@ -936,6 +938,8 @@ test('user generation APIs are scoped to the authenticated user', async () => {
       lifecycle: 'active',
       status: 'completed',
       isFavorite: false,
+      isShared: false,
+      shareCode: null,
       userId: 'user-1',
     }]);
 
@@ -956,6 +960,102 @@ test('user generation APIs are scoped to the authenticated user', async () => {
   });
 
   assert.equal(seenQueries.length, 3);
+});
+
+test('generation share APIs publish public images with the creator invite code', async () => {
+  const dependencies: ServerDependencies = {
+    resolveAuthUser: async () => ({ id: 'user-1', email: 'user@example.com' }),
+    query: async (sql, params) => {
+      if (sql.includes('update public.generations') && sql.includes('set is_shared = true')) {
+        assert.deepEqual(params?.slice(0, 2), ['gen-1', 'user-1']);
+        assert.equal(typeof params?.[2], 'string');
+        return {
+          rows: [{
+            id: 'gen-1',
+            is_shared: true,
+            share_code: 'SHARE88',
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('from public.generations g') && sql.includes('p.invite_code as creator_invite_code')) {
+        assert.deepEqual(params, ['SHARE88']);
+        return {
+          rows: [{
+            id: 'gen-1',
+            prompt: 'A lighthouse in fog',
+            aspect_ratio: '1:1',
+            style_strength: 75,
+            engine: 'flux-1',
+            image_url: 'https://cdn.example.com/pic-1.png',
+            created_at: '2026-04-22T12:00:00.000Z',
+            picture_expires_at: null,
+            picture_lifecycle: 'active',
+            status: 'completed',
+            creator_invite_code: 'INVITE88',
+          }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('update public.generations') && sql.includes('set is_shared = false')) {
+        assert.deepEqual(params, ['gen-1', 'user-1']);
+        return {
+          rows: [{
+            id: 'gen-1',
+            is_shared: false,
+            share_code: 'SHARE88',
+          }],
+          rowCount: 1,
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await withTestServer(dependencies, async (baseUrl) => {
+    const headers = { Authorization: 'Bearer user-token', 'Content-Type': 'application/json' };
+
+    const shareResponse = await fetch(`${baseUrl}/api/my/generations/gen-1/share`, {
+      method: 'POST',
+      headers,
+    });
+    assert.equal(shareResponse.status, 200);
+    assert.deepEqual(await shareResponse.json(), {
+      id: 'gen-1',
+      isShared: true,
+      shareCode: 'SHARE88',
+    });
+
+    const publicResponse = await fetch(`${baseUrl}/api/public/shares/SHARE88`);
+    assert.equal(publicResponse.status, 200);
+    assert.deepEqual(await publicResponse.json(), {
+      id: 'gen-1',
+      prompt: 'A lighthouse in fog',
+      aspectRatio: '1:1',
+      styleStrength: 75,
+      engine: 'flux-1',
+      imageUrl: 'https://cdn.example.com/pic-1.png',
+      createdAt: new Date('2026-04-22T12:00:00.000Z').getTime(),
+      expiresAt: null,
+      lifecycle: 'active',
+      status: 'completed',
+      creatorInviteCode: 'INVITE88',
+    });
+
+    const unshareResponse = await fetch(`${baseUrl}/api/my/generations/gen-1/share`, {
+      method: 'DELETE',
+      headers,
+    });
+    assert.equal(unshareResponse.status, 200);
+    assert.deepEqual(await unshareResponse.json(), {
+      id: 'gen-1',
+      isShared: false,
+      shareCode: 'SHARE88',
+    });
+  });
 });
 
 test('GET /api/my/generation-capacity returns backend-authoritative capacity state', async () => {
@@ -1026,6 +1126,8 @@ test('GET /api/generations includes admin-only generation diagnostics', async ()
             error_message: 'Upstream failed: 502',
             error_details: 'provider returned 502 bad gateway',
             is_favorite: false,
+            is_shared: false,
+            share_code: null,
             user_id: 'user-9',
           }],
           rowCount: 1,
@@ -1060,6 +1162,8 @@ test('GET /api/generations includes admin-only generation diagnostics', async ()
       errorMessage: 'Upstream failed: 502',
       errorDetails: 'provider returned 502 bad gateway',
       isFavorite: false,
+      isShared: false,
+      shareCode: null,
       userId: 'user-9',
     }]);
   });

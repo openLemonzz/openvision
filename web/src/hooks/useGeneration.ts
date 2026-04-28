@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { adminFetch } from '@/lib/admin-api';
+import { buildSharePageUrl } from '@/lib/share-links';
 import {
   buildGenerateRequestPayload,
   countActiveGenerations,
@@ -25,6 +26,8 @@ export interface GenerationRecord {
   lifecycle: LifecycleStatus;
   status: 'pending' | 'generating' | 'completed' | 'failed';
   isFavorite: boolean;
+  isShared: boolean;
+  shareCode: string | null;
   userId?: string;
 }
 
@@ -152,11 +155,11 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     try {
       const records = await adminFetch<GenerationRecord[]>('/my/generations', {}, accessToken);
       console.log(`[FE] loadHistory() loaded ${records.length} records`);
-      
+
       setHistory(prev => {
         const recordMap = new Map(records.map(r => [r.id, r]));
         const now = Date.now();
-        
+
         // 保留本地状态中由于数据库同步延迟可能未返回的新建记录（30秒内）
         prev.forEach(p => {
           if ((p.status === 'pending' || p.status === 'generating') && now - p.createdAt < 30000) {
@@ -165,7 +168,7 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
             }
           }
         });
-        
+
         const merged = Array.from(recordMap.values());
         // 按创建时间降序排列，确保最新的记录在最前面
         merged.sort((a, b) => b.createdAt - a.createdAt);
@@ -281,6 +284,8 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
       lifecycle: 'pending',
       status: 'pending',
       isFavorite: false,
+      isShared: false,
+      shareCode: null,
       userId,
     };
 
@@ -368,6 +373,41 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     });
   }, [getAccessToken, history, userId]);
 
+  // Toggle share
+  const toggleShare = useCallback(async (id: string) => {
+    if (!userId) return;
+    const record = history.find(r => r.id === id);
+    if (!record) return;
+    const nextShared = !record.isShared;
+
+    const accessToken = await getAccessToken();
+    if (!accessToken) return;
+
+    try {
+      const response = await adminFetch<{ shareCode: string | null }>(
+        `/my/generations/${id}/share`,
+        {
+          method: nextShared ? 'POST' : 'DELETE',
+        },
+        accessToken
+      );
+
+      setHistory(prev => {
+        return prev.map(r => r.id === id ? { ...r, isShared: nextShared, shareCode: nextShared ? response.shareCode : null } : r);
+      });
+
+      if (nextShared && response.shareCode) {
+        toast.success('已开启分享，链接已复制到剪贴板！');
+        void navigator.clipboard.writeText(buildSharePageUrl(window.location.origin, response.shareCode));
+      } else {
+        toast.success('已取消分享');
+      }
+    } catch (error) {
+      toast.error('操作失败');
+      console.error(error);
+    }
+  }, [getAccessToken, history, userId]);
+
   // Delete
   const deleteRecord = useCallback(async (id: string) => {
     if (!userId) return;
@@ -393,6 +433,7 @@ export function useGeneration(userId: string | undefined, models: ModelConfig[])
     isWaitingForCapacityConfirmation,
     generate,
     toggleFavorite,
+    toggleShare,
     deleteRecord,
     refreshHistory: loadHistory,
     refreshGenerationCapacity: loadGenerationCapacity,

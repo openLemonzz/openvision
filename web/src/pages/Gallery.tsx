@@ -10,13 +10,14 @@ interface GalleryProps {
   history: GenerationRecord[];
   onDelete: (id: string) => void;
   onToggleFavorite: (id: string) => void;
+  onToggleShare: (id: string) => void;
   onEditImage: (imageUrl: string, prompt?: string) => void;
   lifecycleTick?: number;
 }
 
 const FILTER_OPTIONS = ['全部', '1:1', '16:9', '3:4', '9:16'];
 
-export default function Gallery({ history, onDelete, onToggleFavorite, onEditImage }: GalleryProps) {
+export default function Gallery({ history, onDelete, onToggleFavorite, onToggleShare, onEditImage }: GalleryProps) {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [filter, setFilter] = useState('全部');
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -107,7 +108,9 @@ export default function Gallery({ history, onDelete, onToggleFavorite, onEditIma
                   imageUrl={record.imageUrl!}
                   downloadName={`${record.generationCode || record.pictureId || 'vision-image'}.png`}
                   isFavorite
+                  isShared={record.isShared}
                   onToggleFavorite={() => onToggleFavorite(record.id)}
+                  onToggleShare={() => onToggleShare(record.id)}
                   onDelete={() => onDelete(record.id)}
                   onEditImage={() => onEditImage(record.imageUrl!, record.prompt)}
                   onZoom={() => openLightbox(record.imageUrl!)}
@@ -144,7 +147,9 @@ export default function Gallery({ history, onDelete, onToggleFavorite, onEditIma
                   imageUrl={record.imageUrl!}
                   downloadName={`${record.generationCode || record.pictureId || 'vision-image'}.png`}
                   isFavorite
+                  isShared={record.isShared}
                   onToggleFavorite={() => onToggleFavorite(record.id)}
+                  onToggleShare={() => onToggleShare(record.id)}
                   onDelete={() => onDelete(record.id)}
                   onEditImage={() => onEditImage(record.imageUrl!, record.prompt)}
                   onZoom={() => openLightbox(record.imageUrl!)}

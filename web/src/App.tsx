@@ -3,17 +3,20 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import Navigation from './components/Navigation';
 import AuthModal from './components/AuthModal';
+import { Toaster } from './components/ui/sonner';
 import Home from './pages/Home';
 import Gallery from './pages/Gallery';
 import Invite from './pages/Invite';
 import ConsoleLayout from './pages/console/ConsoleLayout';
 import ConsoleAccount from './pages/console/ConsoleAccount';
 import ConsoleGenerations from './pages/console/ConsoleGenerations';
+import ShareView from './pages/ShareView';
 import InitializationScreen from './components/InitializationScreen';
 import { useAuth } from './hooks/useAuth';
 import { useGeneration } from './hooks/useGeneration';
 import { useInitialization } from './hooks/useInitialization';
 import { usePublicModels } from './hooks/usePublicModels';
+import { buildWorkshopRetryPath } from './lib/share-links';
 import {
   HOME_INTRO_OVERLAY_HOLD_MS,
   getHomeIntroPhase,
@@ -93,9 +96,10 @@ function AppRoutes({
     aspectRatio: '1:1' | '16:9' | '3:4' | '9:16',
     styleStrength: number,
     engine: string,
+    inviteCode?: string
   ) => {
     setWorkshopEditDraft({ imageUrl: '', prompt, aspectRatio, styleStrength, engine });
-    navigate('/', { replace: false });
+    navigate(buildWorkshopRetryPath(inviteCode), { replace: false });
   }, [navigate]);
 
   // P0-2: 登录成功后返回原目标页
@@ -112,6 +116,7 @@ function AppRoutes({
   return (
     <Routes>
       <Route path="/admin/*" element={<AdminRedirect />} />
+      <Route path="/s/:shareCode" element={<ShareView onTryYourself={openWorkshopRetry} />} />
       {/* Console Routes (user dashboard) */}
       <Route
         path="/console"
@@ -130,6 +135,7 @@ function AppRoutes({
               history={gen.favoriteRecords}
               onDelete={gen.deleteRecord}
               onToggleFavorite={gen.toggleFavorite}
+              onToggleShare={gen.toggleShare}
               onEditImage={openWorkshopEdit}
               lifecycleTick={gen.lifecycleTick}
             />
@@ -142,6 +148,7 @@ function AppRoutes({
               history={gen.history}
               onDelete={gen.deleteRecord}
               onToggleFavorite={gen.toggleFavorite}
+              onToggleShare={gen.toggleShare}
               onEditImage={openWorkshopEdit}
               onRetryGenerate={openWorkshopRetry}
               lifecycleTick={gen.lifecycleTick}
@@ -208,6 +215,7 @@ function AppRoutes({
                     onRequireAuth={auth.openLogin}
                     onDeleteRecord={gen.deleteRecord}
                     onToggleFavoriteRecord={gen.toggleFavorite}
+                    onToggleShareRecord={gen.toggleShare}
                     onRetryGenerateRecord={openWorkshopRetry}
                   />
                 }
@@ -314,6 +322,7 @@ function App() {
           }}
         />
       ) : null}
+      <Toaster richColors position="top-center" />
     </>
   );
 }

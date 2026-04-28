@@ -34,6 +34,8 @@ create table if not exists public.generations (
     check (picture_lifecycle in ('pending', 'generating', 'active', 'expiring', 'expired')),
   picture_expires_at timestamptz,
   is_favorite boolean not null default false,
+  is_shared boolean not null default false,
+  share_code text unique,
   created_at timestamptz not null default now()
 );
 
@@ -208,6 +210,10 @@ begin
       insert into public.referrals (inviter_id, invitee_id)
       values (inviter_uuid, new.id)
       on conflict (invitee_id) do nothing;
+
+      update public.profiles
+         set concurrency_limit = concurrency_limit + 1
+       where user_id = inviter_uuid;
     end if;
   end if;
 
@@ -238,3 +244,9 @@ on conflict (id) do nothing;
 insert into public.app_settings (id, public_web_url)
 values ('default', null)
 on conflict (id) do nothing;
+
+alter table public.generations
+  add column if not exists is_shared boolean not null default false;
+
+alter table public.generations
+  add column if not exists share_code text unique;

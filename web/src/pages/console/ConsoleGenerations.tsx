@@ -14,6 +14,7 @@ interface ConsoleGenerationsProps {
   history: GenerationRecord[];
   onDelete: (id: string) => void;
   onToggleFavorite: (id: string) => void;
+  onToggleShare: (id: string) => void;
   onEditImage: (imageUrl: string, prompt?: string) => void;
   onRetryGenerate: (
     prompt: string,
@@ -31,7 +32,7 @@ const aspectMap: Record<string, string> = {
   '9:16': '9/16',
 };
 
-export default function ConsoleGenerations({ history, onDelete, onToggleFavorite, onEditImage, onRetryGenerate, lifecycleTick }: ConsoleGenerationsProps) {
+export default function ConsoleGenerations({ history, onDelete, onToggleFavorite, onToggleShare, onEditImage, onRetryGenerate, lifecycleTick }: ConsoleGenerationsProps) {
   void lifecycleTick;
 
   const completedImages = history
@@ -140,7 +141,9 @@ export default function ConsoleGenerations({ history, onDelete, onToggleFavorite
                     imageUrl={record.imageUrl}
                     downloadName={`${record.generationCode || record.pictureId || 'vision-image'}.png`}
                     isFavorite={record.isFavorite}
+                    isShared={record.isShared}
                     onToggleFavorite={() => onToggleFavorite(record.id)}
+                    onToggleShare={() => onToggleShare(record.id)}
                     onDelete={() => onDelete(record.id)}
                     onEditImage={() => onEditImage(record.imageUrl!, record.prompt)}
                     onZoom={() => openLightbox(record.imageUrl!)}

@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import type { Response } from 'express';
+import { randomInt } from 'node:crypto';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { decryptSecret, encryptSecret } from './crypto.js';
@@ -98,8 +99,19 @@ function mapGenerationRow(row: Record<string, unknown>) {
     lifecycle: (row.picture_lifecycle as string | null) ?? null,
     status: row.status as 'pending' | 'generating' | 'completed' | 'failed',
     isFavorite: Boolean(row.is_favorite),
+    isShared: Boolean(row.is_shared),
+    shareCode: (row.share_code as string | null) ?? null,
     userId: String(row.user_id),
   };
+}
+
+function generateShareCode() {
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  let result = '';
+  for (let i = 0; i < 10; i++) {
+    result += chars[randomInt(chars.length)];
+  }
+  return result;
 }
 
 function generateBusinessCode(prefix: 'gen' | 'img' | 'job') {
@@ -1349,6 +1361,90 @@ export function createApp({
     }
 
     res.status(204).end();
+  }));
+
+  app.post('/api/my/generations/:id/share', requireUser, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    if (!ensureServerRuntime(res)) return;
+
+    // First try to just set it to shared, generating a new code if it doesn't have one
+    const shareCode = generateShareCode();
+
+    const { rows, rowCount } = await query!(
+      `update public.generations
+          set is_shared = true,
+              share_code = coalesce(share_code, $3)
+        where id = $1 and user_id = $2
+      returning id, is_shared, share_code`,
+      [req.params.id, req.authUser!.id, shareCode]
+    );
+
+    if (!rowCount) {
+      res.status(404).json({ error: 'Generation not found' });
+      return;
+    }
+
+    res.json({
+      id: rows[0].id,
+      isShared: Boolean(rows[0].is_shared),
+      shareCode: rows[0].share_code,
+    });
+  }));
+
+  app.delete('/api/my/generations/:id/share', requireUser, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    if (!ensureServerRuntime(res)) return;
+
+    const { rows, rowCount } = await query!(
+      `update public.generations
+          set is_shared = false
+        where id = $1 and user_id = $2
+      returning id, is_shared, share_code`,
+      [req.params.id, req.authUser!.id]
+    );
+
+    if (!rowCount) {
+      res.status(404).json({ error: 'Generation not found' });
+      return;
+    }
+
+    res.json({
+      id: rows[0].id,
+      isShared: Boolean(rows[0].is_shared),
+      shareCode: rows[0].share_code,
+    });
+  }));
+
+  app.get('/api/public/shares/:shareCode', asyncHandler(async (req: express.Request, res: express.Response) => {
+    if (!ensureServerRuntime(res)) return;
+
+    const { rows } = await query!(
+      `select g.id, g.prompt, g.aspect_ratio, g.style_strength, g.engine, g.image_url, g.created_at, g.picture_expires_at, g.picture_lifecycle, g.status, p.invite_code as creator_invite_code
+         from public.generations g
+         left join public.profiles p on g.user_id = p.user_id
+        where g.share_code = $1 and g.is_shared = true`,
+      [req.params.shareCode]
+    );
+
+    if (rows.length === 0) {
+      res.status(404).json({ error: 'Shared generation not found or is private' });
+      return;
+    }
+
+    const row = rows[0];
+
+    // Omit sensitive data like user_id, is_favorite, etc.
+    res.json({
+      id: String(row.id),
+      prompt: String(row.prompt),
+      aspectRatio: row.aspect_ratio,
+      styleStrength: Number(row.style_strength),
+      engine: String(row.engine),
+      imageUrl: String(row.image_url ?? ''),
+      createdAt: new Date(String(row.created_at)).getTime(),
+      expiresAt: row.picture_expires_at ? new Date(String(row.picture_expires_at)).getTime() : null,
+      lifecycle: (row.picture_lifecycle as string | null) ?? null,
+      status: row.status,
+      creatorInviteCode: row.creator_invite_code ? String(row.creator_invite_code) : null,
+    });
   }));
 
   app.get('/api/generations', requireAdmin, asyncHandler(async (_req, res) => {

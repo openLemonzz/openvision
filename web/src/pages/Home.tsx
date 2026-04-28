@@ -43,6 +43,7 @@ interface HomeProps {
   onRequireAuth: () => void;
   onDeleteRecord: (id: string) => void;
   onToggleFavoriteRecord: (id: string) => void;
+  onToggleShareRecord: (id: string) => void;
   onRetryGenerateRecord: (prompt: string, aspectRatio: '1:1' | '16:9' | '3:4' | '9:16', styleStrength: number, engine: string) => void;
 }
 
@@ -68,6 +69,7 @@ export default function Home({
   onRequireAuth,
   onDeleteRecord,
   onToggleFavoriteRecord,
+  onToggleShareRecord,
   onRetryGenerateRecord,
 }: HomeProps) {
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
@@ -202,6 +204,7 @@ export default function Home({
           foldable
           onDelete={onDeleteRecord}
           onToggleFavorite={onToggleFavoriteRecord}
+          onToggleShare={onToggleShareRecord}
           onEditImage={(imageUrl) => {
             setReferenceImageUrl(imageUrl);
           }}
