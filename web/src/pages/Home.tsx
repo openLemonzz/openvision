@@ -154,9 +154,6 @@ export default function Home({
         <section className="flex flex-col items-center justify-center px-4 pt-4 pb-8">
           {/* Title */}
           <div className={`text-center mb-10 ${playHomeIntroAnimation ? 'home-hero-enter' : ''}`}>
-            <p className="text-[10px] text-[#B8B8B8] uppercase tracking-[0.34em] font-mono-data mb-3">
-              AIGC · Image Generation Platform
-            </p>
             <h1
               className="text-[clamp(28px,5vw,56px)] font-normal text-white leading-[0.95] tracking-[0.02em] uppercase"
               style={{ fontFamily: "'Geist Pixel', 'IBM Plex Mono', ui-monospace, monospace" }}

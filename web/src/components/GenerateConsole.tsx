@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo, useEffect, type ClipboardEvent } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { Zap, AlertCircle, ChevronDown, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -143,39 +143,56 @@ export default function GenerateConsole({
     }
   }, [prompt, aspectRatio, styleStrength, engine, isLoggedIn, onGenerate, onRequireAuth, referenceImageUrl]);
 
-  const handlePaste = useCallback((event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const imageItem = Array.from(event.clipboardData.items).find((item) =>
-      item.kind === 'file' && item.type.startsWith('image/')
-    );
+  useEffect(() => {
+    const handleGlobalPaste = (event: globalThis.ClipboardEvent) => {
+      if (!event.clipboardData) return;
 
-    if (!imageItem) {
-      return;
-    }
+      const imageItem = Array.from(event.clipboardData.items).find((item) =>
+        item.kind === 'file' && item.type.startsWith('image/')
+      );
 
-    const imageFile = imageItem.getAsFile();
-    if (!imageFile) {
-      return;
-    }
-
-    event.preventDefault();
-
-    if (imageFile.size > 12 * 1024 * 1024) {
-      toast.error('参考图不能超过 12MB');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result !== 'string') {
-        toast.error('读取粘贴图片失败');
+      if (!imageItem) {
         return;
       }
 
-      onSetReferenceImage(reader.result);
-      toast.success('已载入参考图');
+      const imageFile = imageItem.getAsFile();
+      if (!imageFile) {
+        return;
+      }
+
+      // Ignore paste if the user is typing in a different text input/textarea?
+      // For images, it's usually safe to capture anywhere on this page
+      // because you can't paste images as text anyway.
+      const activeElement = document.activeElement;
+      const isInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+      if (isInput && activeElement !== textareaRef.current && (activeElement as HTMLInputElement).type === 'text') {
+         // Maybe don't prevent default, but still capture the image?
+         // Actually, if it's an image, the default behavior in a text input is nothing.
+      } else {
+        event.preventDefault();
+      }
+
+      if (imageFile.size > 12 * 1024 * 1024) {
+        toast.error('参考图不能超过 12MB');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result !== 'string') {
+          toast.error('读取粘贴图片失败');
+          return;
+        }
+
+        onSetReferenceImage(reader.result);
+        toast.success('已载入参考图');
+      };
+      reader.onerror = () => toast.error('读取粘贴图片失败');
+      reader.readAsDataURL(imageFile);
     };
-    reader.onerror = () => toast.error('读取粘贴图片失败');
-    reader.readAsDataURL(imageFile);
+
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => window.removeEventListener('paste', handleGlobalPaste);
   }, [onSetReferenceImage]);
 
   const buttonLabel = useMemo(() => {
@@ -228,7 +245,6 @@ export default function GenerateConsole({
           ref={textareaRef}
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
-          onPaste={handlePaste}
           onKeyDown={e => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
               e.preventDefault();

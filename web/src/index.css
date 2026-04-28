@@ -29,10 +29,11 @@
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
   body {
-    font-family: "Noto Sans SC", "PingFang SC", ui-sans-serif, system-ui, sans-serif;
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "微软雅黑", ui-sans-serif, system-ui, sans-serif;
     background: #000;
     color: #fff;
     margin: 0;
