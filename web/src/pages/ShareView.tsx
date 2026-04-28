@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Share, ExternalLink, Copy } from 'lucide-react';
 import { toast } from 'sonner';
+import ProgressiveImage from '@/components/ProgressiveImage';
 import { adminFetch } from '@/lib/admin-api';
 import { buildPublicSharePath } from '@/lib/share-links';
 
@@ -78,10 +79,14 @@ export default function ShareView({
     <div className="min-h-screen bg-black text-white flex flex-col md:flex-row font-mono-data">
       {/* Left side: Image Display */}
       <div className="flex-1 flex items-center justify-center bg-zinc-950 p-4 md:p-8 min-h-[50vh]">
-        <img
+        <ProgressiveImage
           src={data.imageUrl}
           alt={data.prompt}
-          className="max-w-full max-h-[80vh] md:max-h-[90vh] object-contain rounded-sm shadow-2xl"
+          aspectRatio={data.aspectRatio}
+          priority="high"
+          viewportBound="90vh"
+          fit="contain"
+          className="max-w-full rounded-sm shadow-2xl"
         />
       </div>
 

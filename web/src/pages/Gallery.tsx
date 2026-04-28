@@ -3,6 +3,7 @@ import { Grid3X3, List } from 'lucide-react';
 import CopyableMonoValue from '../components/CopyableMonoValue';
 import CopyPromptButton from '../components/CopyPromptButton';
 import GenerationImageActions from '../components/GenerationImageActions';
+import ProgressiveImage from '../components/ProgressiveImage';
 import Lightbox from '../components/ui/Lightbox';
 import type { GenerationRecord } from '../hooks/useGeneration';
 
@@ -97,10 +98,13 @@ export default function Gallery({ history, onDelete, onToggleFavorite, onToggleS
               className="group relative border border-[#222] overflow-hidden hover:border-[#4D4D4D] transition-colors cursor-pointer"
               onClick={() => openLightbox(record.imageUrl!)}
             >
-              <img
+              <ProgressiveImage
                 src={record.imageUrl!}
                 alt={record.prompt}
-                className="w-full aspect-square object-cover bg-[#0D0D0D] block"
+                aspectRatio="1:1"
+                priority="lazy"
+                fit="cover"
+                className="w-full"
               />
               {/* 信息区：固定左下角，actions 是 absolute 定位不占流 */}
               <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4">
@@ -138,10 +142,13 @@ export default function Gallery({ history, onDelete, onToggleFavorite, onToggleS
               className="grid grid-cols-[100px_1fr_auto] gap-4 border-t border-[#222] py-4 items-center group hover:bg-white/[0.02] transition-colors"
             >
               <div className="group relative cursor-pointer" onClick={() => openLightbox(record.imageUrl!)}>
-                <img
+                <ProgressiveImage
                   src={record.imageUrl!}
                   alt={record.prompt}
-                  className="w-full aspect-square object-contain bg-[#0D0D0D] block border border-[#222]"
+                  aspectRatio="1:1"
+                  priority="lazy"
+                  fit="contain"
+                  className="w-full border border-[#222]"
                 />
                 <GenerationImageActions
                   imageUrl={record.imageUrl!}

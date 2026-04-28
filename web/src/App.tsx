@@ -16,13 +16,8 @@ import { useAuth } from './hooks/useAuth';
 import { useGeneration } from './hooks/useGeneration';
 import { useInitialization } from './hooks/useInitialization';
 import { usePublicModels } from './hooks/usePublicModels';
+import { resolveAppShellState } from './lib/app-shell';
 import { buildWorkshopRetryPath } from './lib/share-links';
-import {
-  HOME_INTRO_OVERLAY_HOLD_MS,
-  getHomeIntroPhase,
-  markHomeIntroSeen,
-  shouldPlayHomeIntro,
-} from './lib/home-intro';
 
 // Re-export for type usage
 export type { GenerationRecord } from './hooks/useGeneration';
@@ -242,81 +237,21 @@ function AppRoutes({
 
 function App() {
   const initialization = useInitialization();
-  const [shouldRunHomeIntro, setShouldRunHomeIntro] = useState(() =>
-    shouldPlayHomeIntro(typeof window === 'undefined' ? null : window.localStorage)
-  );
-  const [homeIntroStartedAtMs, setHomeIntroStartedAtMs] = useState<number | null>(null);
-  const [homeIntroElapsedMs, setHomeIntroElapsedMs] = useState(0);
-
-  useEffect(() => {
-    if (
-      initialization.status.kind !== 'ready' ||
-      !shouldRunHomeIntro ||
-      homeIntroStartedAtMs !== null
-    ) {
-      return;
-    }
-
-    const startedAtMs = Date.now();
-    markHomeIntroSeen(typeof window === 'undefined' ? null : window.localStorage);
-    setHomeIntroStartedAtMs(startedAtMs);
-    setHomeIntroElapsedMs(0);
-  }, [homeIntroStartedAtMs, initialization.status.kind, shouldRunHomeIntro]);
-
-  useEffect(() => {
-    if (homeIntroStartedAtMs === null) {
-      return;
-    }
-
-    let frameId = 0;
-
-    const tick = () => {
-      const elapsedMs = Date.now() - homeIntroStartedAtMs;
-      setHomeIntroElapsedMs(elapsedMs);
-
-      if (getHomeIntroPhase(elapsedMs) === 'complete') {
-        setShouldRunHomeIntro(false);
-        return;
-      }
-
-      frameId = window.requestAnimationFrame(tick);
-    };
-
-    frameId = window.requestAnimationFrame(tick);
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [homeIntroStartedAtMs]);
-
-  const homeIntroPhase =
-    homeIntroStartedAtMs === null ? null : getHomeIntroPhase(homeIntroElapsedMs);
-  const shouldMountRoutes =
-    initialization.status.kind === 'ready' &&
-    (!shouldRunHomeIntro ||
-      (homeIntroPhase !== null && homeIntroPhase !== 'holding'));
-  const shouldShowOverlay =
-    initialization.status.kind !== 'ready' ||
-    (shouldRunHomeIntro && homeIntroPhase !== 'complete');
-  const heroIntroStartedAtMs =
-    homeIntroStartedAtMs === null || homeIntroPhase === null || homeIntroPhase === 'holding'
-      ? null
-      : homeIntroStartedAtMs + HOME_INTRO_OVERLAY_HOLD_MS;
+  const appShellState = resolveAppShellState(initialization.status.kind);
 
   return (
     <>
-      {shouldMountRoutes ? (
+      {appShellState.shouldMountRoutes ? (
         <AppRoutes
-          homeIntroStartedAtMs={heroIntroStartedAtMs}
-          playHomeIntroAnimation={shouldRunHomeIntro}
+          homeIntroStartedAtMs={null}
+          playHomeIntroAnimation={false}
         />
       ) : null}
-      {shouldShowOverlay ? (
+      {appShellState.shouldShowInitializationScreen ? (
         <InitializationScreen
           status={initialization.status}
           runtimeConfig={initialization.runtimeConfig}
-          overlay={shouldMountRoutes}
-          exiting={homeIntroPhase === 'exiting'}
+          overlay={appShellState.shouldMountRoutes}
           onRetry={() => {
             void initialization.refresh();
           }}

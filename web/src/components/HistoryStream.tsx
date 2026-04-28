@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import CopyableMonoValue from './CopyableMonoValue';
 import CopyPromptButton from './CopyPromptButton';
 import GenerationImageActions from './GenerationImageActions';
+import ProgressiveImage from './ProgressiveImage';
 import Lightbox from './ui/Lightbox';
 import type { GenerationRecord } from '../hooks/useGeneration';
 import {
@@ -75,7 +76,7 @@ function CinematicRevealImage({
   }, [animate, src]);
 
   const blockSize = 12;
-  const steps = Math.ceil(width / blockSize);
+  const steps = Math.max(1, Math.ceil(width / blockSize));
   const duration = 0.6;
   const delay = 0.15;
 
@@ -92,18 +93,15 @@ function CinematicRevealImage({
   };
 
   return (
-    <div ref={containerRef} className="relative overflow-hidden group" style={{ aspectRatio: aspectMap[aspectRatio] || '1/1' }}>
-      <img
-        src={src}
-        alt={alt}
-        className={`w-full h-full object-cover block transition-all duration-700 ease-out ${
-          animate
-            ? revealed
-              ? 'opacity-100 blur-0 scale-100'
-              : 'opacity-0 blur-md scale-[1.03]'
-            : 'opacity-100 blur-0 scale-100'
-        }`}
-      />
+    <ProgressiveImage
+      src={src}
+      alt={alt}
+      aspectRatio={aspectRatio}
+      priority="lazy"
+      fit="cover"
+      className="relative overflow-hidden group"
+    >
+      <div ref={containerRef} className="absolute inset-0 pointer-events-none" />
       {/* ASCII overlay on hover */}
       <div
         className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
@@ -114,7 +112,7 @@ function CinematicRevealImage({
       />
       {actions}
       {animate ? <div style={revealStyles} /> : null}
-    </div>
+    </ProgressiveImage>
   );
 }
 

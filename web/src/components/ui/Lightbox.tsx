@@ -1,11 +1,80 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { resolveProgressiveImageAttributes } from '@/lib/progressive-image';
+import { cn } from '@/lib/utils';
 
 interface LightboxProps {
   images: string[];
   currentIndex: number;
   onClose: () => void;
   onNavigate?: (index: number) => void;
+}
+
+function LightboxImage({
+  src,
+  onClick,
+}: {
+  src: string;
+  onClick: (event: MouseEvent<HTMLImageElement>) => void;
+}) {
+  const decodeVersionRef = useRef(0);
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const isLoaded = loadedSrc === src;
+  const imageAttributes = resolveProgressiveImageAttributes('high');
+
+  const markReady = useCallback((image: HTMLImageElement | null, expectedSrc: string) => {
+    if (!image) {
+      return;
+    }
+
+    const decodeVersion = decodeVersionRef.current + 1;
+    decodeVersionRef.current = decodeVersion;
+
+    const finish = () => {
+      if (decodeVersionRef.current === decodeVersion) {
+        setLoadedSrc(expectedSrc);
+      }
+    };
+
+    if (typeof image.decode === 'function') {
+      void image.decode().then(finish, finish);
+      return;
+    }
+
+    finish();
+  }, []);
+
+  const setImageRef = useCallback((image: HTMLImageElement | null) => {
+    if (image?.complete && image.naturalWidth > 0) {
+      markReady(image, src);
+    }
+  }, [markReady, src]);
+
+  return (
+    <>
+      {!isLoaded ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 overflow-hidden bg-[#111]"
+        >
+          <div className="progress-active-shimmer absolute inset-0 opacity-55" />
+        </div>
+      ) : null}
+      <img
+        key={src}
+        {...imageAttributes}
+        ref={setImageRef}
+        src={src}
+        alt=""
+        className={cn(
+          'max-w-full max-h-full object-contain transition-opacity duration-300',
+          isLoaded ? 'lightbox-image-animate opacity-100' : 'opacity-0'
+        )}
+        onLoad={(event) => markReady(event.currentTarget, src)}
+        onClick={onClick}
+      />
+    </>
+  );
 }
 
 export default function Lightbox({ images, currentIndex, onClose, onNavigate }: LightboxProps) {
@@ -44,12 +113,9 @@ export default function Lightbox({ images, currentIndex, onClose, onNavigate }: 
         </div>
       )}
 
-      {/* 图片主体，key 变化时重新触发入场动画 */}
-      <img
-        key={src}
+      {/* 图片主体，解码完成后再淡入，避免大图逐行刷出 */}
+      <LightboxImage
         src={src}
-        alt=""
-        className="lightbox-image-animate max-w-full max-h-full object-contain"
         onClick={e => e.stopPropagation()}
       />
 
